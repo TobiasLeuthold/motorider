@@ -9,13 +9,16 @@ import 'add_fillup_screen.dart';
 import 'home_shell.dart';
 
 class FuelLogScreen extends StatelessWidget {
-  const FuelLogScreen({super.key});
+  const FuelLogScreen({super.key, this.stream});
+
+  /// Optional stream override for testing. Defaults to the global repo.
+  final Stream<List<FillUp>>? stream;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: StreamBuilder<List<FillUp>>(
-        stream: fillUpRepo.watchAll(),
+        stream: stream ?? fillUpRepo.watchAll(),
         builder: (context, snap) {
           final fillups = (snap.data ?? const <FillUp>[]).toList()
             ..sort((a, b) => b.odometerKm.compareTo(a.odometerKm));

@@ -16,6 +16,12 @@ class AddFillUpScreen extends StatefulWidget {
   State<AddFillUpScreen> createState() => _AddFillUpScreenState();
 }
 
+/// Set true from widget tests to skip platform-channel side effects
+/// (location auto-capture) so the screen layout can be exercised in isolation.
+bool _isUnderTest = false;
+// ignore: avoid_setters_without_getters
+set debugSetAddFillUpUnderTest(bool v) => _isUnderTest = v;
+
 class _AddFillUpScreenState extends State<AddFillUpScreen> {
   final _formKey = GlobalKey<FormState>();
   final _odoCtrl = TextEditingController();
@@ -50,7 +56,12 @@ class _AddFillUpScreenState extends State<AddFillUpScreen> {
     } else {
       _when = DateTime.now();
       // Try to auto-capture current location for new entries.
-      WidgetsBinding.instance.addPostFrameCallback((_) => _captureLocation(silent: true));
+      // Skipped in widget tests (geolocator platform channels not available).
+      if (!_isUnderTest) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _captureLocation(silent: true),
+        );
+      }
     }
     _litersCtrl.addListener(() => setState(() {}));
     _chfCtrl.addListener(() => setState(() {}));

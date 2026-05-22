@@ -11,7 +11,19 @@ class FillUpRepository {
   final AppDatabase _database;
 
   final _controller = StreamController<List<FillUp>>.broadcast();
-  Stream<List<FillUp>> watchAll() => _controller.stream;
+  List<FillUp> _latest = const [];
+
+  /// Last emitted list. Useful for StreamBuilder's `initialData` so the UI
+  /// doesn't flash an empty state on subscribe.
+  List<FillUp> get latest => _latest;
+
+  /// Stream that emits the cached state immediately to every new subscriber
+  /// (broadcast streams normally only see emissions after subscribe time),
+  /// then forwards live updates.
+  Stream<List<FillUp>> watchAll() async* {
+    yield _latest;
+    yield* _controller.stream;
+  }
 
   Future<List<FillUp>> getAll() async {
     final db = await _database.db;
@@ -56,11 +68,13 @@ class FillUpRepository {
   }
 
   Future<void> _emit() async {
-    _controller.add(await getAll());
+    _latest = await getAll();
+    _controller.add(_latest);
   }
 
-  /// Call once after construction to seed the stream.
+  /// Call once after construction to seed the cached state and stream.
   Future<void> primeStream() async {
-    _controller.add(await getAll());
+    _latest = await getAll();
+    _controller.add(_latest);
   }
 }
