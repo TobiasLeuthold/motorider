@@ -10,12 +10,13 @@ const _seedAssetPath = 'assets/sample_data/fillups.csv';
 /// Imports the bundled CSV into the database.
 ///
 /// Idempotent and self-healing:
-///   1. **Reconciliation pass** — before inserting, removes duplicate rows
-///      that share an odometer reading with a seed row (so legacy installs
-///      that previously wrote random-UUID rows get cleaned up automatically).
-///   2. **Insert pass** — uses deterministic IDs (`csv-<odoKm>`) plus
+///   1. **Insert pass** — uses deterministic IDs (`csv-<odoKm>`) plus
 ///      `ConflictAlgorithm.ignore`, so re-imports never create duplicates and
 ///      never clobber a row that's already there.
+///   2. **Reconciliation pass** — after inserting, collapses any odometer
+///      with multiple rows down to the canonical `csv-<odoKm>` row. This
+///      cleans up legacy installs whose pre-existing random-UUID seed rows
+///      now coexist with the freshly inserted canonical rows.
 ///
 /// Result: a clean `(odometer_km) -> 1 row` mapping for every CSV entry,
 /// regardless of what was in the DB before.
@@ -81,15 +82,16 @@ Future<int> _seed(FillUpRepository repo) async {
     ));
   }
 
+  final inserted = await repo.insertManyIgnore(fillups);
+  debugPrint('[motorider] CSV seed: ${fillups.length} rows in file, '
+      '$inserted newly inserted (rest already present)');
+
   final seedOdometers = fillups.map((f) => f.odometerKm).toSet();
   final deleted = await reconcileSeedDuplicates(repo, seedOdometers);
   if (deleted > 0) {
     debugPrint('[motorider] Reconciled: removed $deleted duplicate row(s)');
   }
 
-  final inserted = await repo.insertManyIgnore(fillups);
-  debugPrint('[motorider] CSV seed: ${fillups.length} rows in file, '
-      '$inserted newly inserted (rest already present)');
   return inserted;
 }
 
