@@ -99,6 +99,7 @@ class _AddFillUpScreenState extends State<AddFillUpScreen> {
             Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: _PickerTile(
                     icon: Icons.calendar_today_rounded,
                     label: dateFmt.format(_when),
@@ -106,10 +107,13 @@ class _AddFillUpScreenState extends State<AddFillUpScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                _PickerTile(
-                  icon: Icons.schedule_rounded,
-                  label: timeFmt.format(_when),
-                  onTap: _pickTime,
+                Expanded(
+                  flex: 2,
+                  child: _PickerTile(
+                    icon: Icons.schedule_rounded,
+                    label: timeFmt.format(_when),
+                    onTap: _pickTime,
+                  ),
                 ),
               ],
             ),
@@ -385,16 +389,18 @@ class _PickerTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 18, color: AppColors.textMuted),
               const SizedBox(width: 10),
-              Expanded(
+              Flexible(
                 child: Text(
                   label,
                   style: const TextStyle(
                     color: AppColors.text,
                     fontWeight: FontWeight.w600,
                   ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

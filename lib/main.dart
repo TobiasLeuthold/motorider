@@ -13,6 +13,21 @@ final FillUpRepository fillUpRepo = FillUpRepository(AppDatabase.instance);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Surface the FIRST exception clearly in the console (the default
+  // logging buries it under a cascade of secondary layout errors).
+  FlutterError.onError = (FlutterErrorDetails details) {
+    // ignore: avoid_print
+    print('\n[motorider] ════ FlutterError: ${details.exception} ════');
+    if (details.stack != null) {
+      // ignore: avoid_print
+      print(details.stack);
+      // ignore: avoid_print
+      print('[motorider] ══════════════════════════════════════════\n');
+    }
+    FlutterError.presentError(details);
+  };
+
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await initializeDateFormatting('de');
 
