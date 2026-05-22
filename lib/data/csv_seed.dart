@@ -7,11 +7,18 @@ import 'fillup_repository.dart';
 
 const _seedAssetPath = 'assets/sample_data/fillups.csv';
 
-/// Imports the bundled CSV into the database when the table is empty.
+/// Imports the bundled CSV into the database.
 ///
-/// Idempotent: calling on a populated DB is a no-op. Until NAS sync exists,
-/// this guarantees a fresh install starts with usable data so charts and
-/// stats render meaningfully during development.
+/// Idempotent and self-healing:
+///   1. **Reconciliation pass** — before inserting, removes duplicate rows
+///      that share an odometer reading with a seed row (so legacy installs
+///      that previously wrote random-UUID rows get cleaned up automatically).
+///   2. **Insert pass** — uses deterministic IDs (`csv-<odoKm>`) plus
+///      `ConflictAlgorithm.ignore`, so re-imports never create duplicates and
+///      never clobber a row that's already there.
+///
+/// Result: a clean `(odometer_km) -> 1 row` mapping for every CSV entry,
+/// regardless of what was in the DB before.
 Future<int> seedFromCsvIfEmpty(FillUpRepository repo) async {
   try {
     return await _seed(repo);
@@ -21,20 +28,22 @@ Future<int> seedFromCsvIfEmpty(FillUpRepository repo) async {
   }
 }
 
+String seedIdForOdometer(int odoKm) => 'csv-$odoKm';
+
 Future<int> _seed(FillUpRepository repo) async {
   final existing = await repo.count();
   debugPrint('[motorider] DB has $existing fill-ups before seed');
-  if (existing > 0) return 0;
 
   final raw = await rootBundle.loadString(_seedAssetPath);
-  // Normalize line endings so CRLF (Windows) and LF both work, then let
-  // the CSV parser pick its default EOL.
   final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   final rows = const CsvToListConverter(
     eol: '\n',
     shouldParseNumbers: false,
   ).convert(normalized);
-  if (rows.isEmpty) return 0;
+  if (rows.isEmpty) {
+    debugPrint('[motorider] Seed CSV is empty, nothing to import');
+    return 0;
+  }
 
   final header = rows.first.map((c) => c.toString()).toList();
   int idx(String name) => header.indexOf(name);
@@ -56,9 +65,12 @@ Future<int> _seed(FillUpRepository repo) async {
     }
     String s(int i) => (i >= 0 && i < r.length) ? r[i].toString() : '';
     double? d(String x) => x.isEmpty ? null : double.tryParse(x);
+    final date = DateTime.parse(s(iDate));
+    final odo = int.parse(s(iOdo));
     fillups.add(FillUp(
-      date: DateTime.parse(s(iDate)),
-      odometerKm: int.parse(s(iOdo)),
+      id: seedIdForOdometer(odo),
+      date: date,
+      odometerKm: odo,
       liters: double.parse(s(iL)),
       totalChf: double.parse(s(iChf)),
       latitude: d(s(iLat)),
@@ -68,7 +80,51 @@ Future<int> _seed(FillUpRepository repo) async {
       fullTank: s(iFull) != '0',
     ));
   }
-  await repo.insertMany(fillups);
-  debugPrint('[motorider] CSV seed imported ${fillups.length} fill-ups');
-  return fillups.length;
+
+  final seedOdometers = fillups.map((f) => f.odometerKm).toSet();
+  final deleted = await reconcileSeedDuplicates(repo, seedOdometers);
+  if (deleted > 0) {
+    debugPrint('[motorider] Reconciled: removed $deleted duplicate row(s)');
+  }
+
+  final inserted = await repo.insertManyIgnore(fillups);
+  debugPrint('[motorider] CSV seed: ${fillups.length} rows in file, '
+      '$inserted newly inserted (rest already present)');
+  return inserted;
+}
+
+/// For every CSV odometer reading, if the DB has >1 row at that odometer,
+/// delete all but one. Prefers the canonical `csv-<odoKm>` row, otherwise
+/// keeps the first. Returns the number of rows deleted.
+///
+/// This is what cleans up legacy installs that wrote random-UUID seed rows
+/// before deterministic IDs existed.
+Future<int> reconcileSeedDuplicates(
+  FillUpRepository repo,
+  Set<int> seedOdometers,
+) async {
+  final all = await repo.getAll();
+  final byOdo = <int, List<FillUp>>{};
+  for (final f in all) {
+    if (seedOdometers.contains(f.odometerKm)) {
+      byOdo.putIfAbsent(f.odometerKm, () => []).add(f);
+    }
+  }
+  var deleted = 0;
+  for (final entry in byOdo.entries) {
+    final group = entry.value;
+    if (group.length <= 1) continue;
+    final canonicalId = seedIdForOdometer(entry.key);
+    final keep = group.firstWhere(
+      (f) => f.id == canonicalId,
+      orElse: () => group.first,
+    );
+    for (final f in group) {
+      if (f.id != keep.id) {
+        await repo.delete(f.id);
+        deleted++;
+      }
+    }
+  }
+  return deleted;
 }

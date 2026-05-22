@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -7,14 +8,28 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   Database? _db;
+  String? _pathOverride;
+
+  /// Tests can call this with `sqflite_common_ffi`'s `inMemoryDatabasePath` to
+  /// avoid `path_provider` and exercise the real schema+SQL on host.
+  @visibleForTesting
+  void debugUsePath(String path) {
+    _pathOverride = path;
+    _db = null;
+  }
 
   Future<Database> get db async {
     return _db ??= await _open();
   }
 
   Future<Database> _open() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final path = p.join(dir.path, 'motorider.db');
+    final String path;
+    if (_pathOverride != null) {
+      path = _pathOverride!;
+    } else {
+      final dir = await getApplicationDocumentsDirectory();
+      path = p.join(dir.path, 'motorider.db');
+    }
     return openDatabase(
       path,
       version: 1,

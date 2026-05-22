@@ -27,8 +27,10 @@ class DashboardScreen extends StatelessWidget {
       customPattern: '¤ #,##0.00',
     );
 
+    final initial = stream == null ? fillUpRepo.latest : const <FillUp>[];
     return Scaffold(
       body: StreamBuilder<List<FillUp>>(
+        initialData: initial,
         stream: stream ?? fillUpRepo.watchAll(),
         builder: (context, snap) {
           final fillups = snap.data ?? const <FillUp>[];

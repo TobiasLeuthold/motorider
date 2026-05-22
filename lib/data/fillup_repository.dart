@@ -61,6 +61,24 @@ class FillUpRepository {
     await _emit();
   }
 
+  /// Inserts rows only if their IDs don't already exist. Used by the CSV seed
+  /// so re-imports don't clobber user edits and don't create duplicates.
+  Future<int> insertManyIgnore(List<FillUp> fillups) async {
+    final db = await _database.db;
+    final batch = db.batch();
+    for (final f in fillups) {
+      batch.insert(
+        'fillups',
+        f.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+    final results = await batch.commit();
+    final inserted = results.where((r) => r is int && r != 0).length;
+    if (inserted > 0) await _emit();
+    return inserted;
+  }
+
   Future<void> delete(String id) async {
     final db = await _database.db;
     await db.delete('fillups', where: 'id = ?', whereArgs: [id]);

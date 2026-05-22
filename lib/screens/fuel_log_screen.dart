@@ -16,8 +16,10 @@ class FuelLogScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final initial = stream == null ? fillUpRepo.latest : const <FillUp>[];
     return Scaffold(
       body: StreamBuilder<List<FillUp>>(
+        initialData: initial,
         stream: stream ?? fillUpRepo.watchAll(),
         builder: (context, snap) {
           final fillups = (snap.data ?? const <FillUp>[]).toList()
