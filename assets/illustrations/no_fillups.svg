@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200">
+  <defs>
+    <linearGradient id="road" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="#FF6B1A" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#FFB154" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#FF6B1A" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="mountain" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#22304F"/>
+      <stop offset="100%" stop-color="#111A2E"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#FFB154"/>
+      <stop offset="100%" stop-color="#FF6B1A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Sun / horizon glow -->
+  <circle cx="220" cy="105" r="48" fill="url(#sun)" opacity="0.7"/>
+  <circle cx="220" cy="105" r="22" fill="#FFB154" opacity="0.95"/>
+
+  <!-- Distant mountains -->
+  <path d="M 0 140 L 40 110 L 75 130 L 110 95 L 150 125 L 190 100 L 235 130 L 280 105 L 320 135 L 320 200 L 0 200 Z"
+        fill="url(#mountain)"/>
+
+  <!-- Foreground hills -->
+  <path d="M 0 165 L 60 150 L 120 162 L 200 145 L 280 160 L 320 152 L 320 200 L 0 200 Z"
+        fill="#0F1A2E"/>
+
+  <!-- Road -->
+  <rect x="20" y="178" width="280" height="4" rx="2" fill="url(#road)"/>
+  <rect x="60" y="186" width="200" height="2" rx="1" fill="url(#road)" opacity="0.6"/>
+
+  <!-- Bike silhouette (small, centered, riding into horizon) -->
+  <g transform="translate(120 138) scale(0.18)">
+    <circle cx="240" cy="720" r="120" fill="#F5F6FA"/>
+    <circle cx="240" cy="720" r="78"  fill="#070C18"/>
+    <circle cx="240" cy="720" r="22"  fill="#F5F6FA"/>
+    <circle cx="784" cy="720" r="120" fill="#F5F6FA"/>
+    <circle cx="784" cy="720" r="78"  fill="#070C18"/>
+    <circle cx="784" cy="720" r="22"  fill="#F5F6FA"/>
+    <path d="M 320,505 C 330,470 380,448 445,442 C 510,438 555,452 580,478 L 590,520 L 560,540 L 345,540 Z" fill="#F5F6FA"/>
+    <path d="M 555,478 L 600,468 L 770,448 L 820,465 L 830,485 L 820,505 L 770,500 L 660,512 L 575,530 Z" fill="#F5F6FA"/>
+    <path d="M 325,500 L 200,475 L 138,520 L 150,548 L 195,562 L 270,572 L 325,560 Z" fill="#F5F6FA"/>
+    <path d="M 148,506 L 232,506 L 218,524 L 162,528 Z" fill="#FF6B1A"/>
+    <line x1="320" y1="520" x2="252" y2="710" stroke="#F5F6FA" stroke-width="22" stroke-linecap="round"/>
+    <path d="M 540,640 L 770,712 L 760,728 L 565,675 Z" fill="#F5F6FA"/>
+  </g>
+</svg>
