@@ -274,18 +274,61 @@ class _ActiveRideViewState extends State<_ActiveRideView> {
                 top: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.danger,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    onPressed: _stop,
-                    icon: const Icon(Icons.stop_rounded, size: 22),
-                    label: const Text(
-                      'Tour beenden',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 4,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: state.isManuallyPaused
+                                ? AppColors.accent
+                                : AppColors.text,
+                            side: BorderSide(
+                              color: state.isManuallyPaused
+                                  ? AppColors.accent
+                                  : AppColors.gridLine,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          onPressed: state.isManuallyPaused
+                              ? rideTracker.resumeRide
+                              : rideTracker.pauseRide,
+                          icon: Icon(
+                            state.isManuallyPaused
+                                ? Icons.play_arrow_rounded
+                                : Icons.pause_rounded,
+                            size: 22,
+                          ),
+                          label: Text(
+                            state.isManuallyPaused ? 'Weiter' : 'Pause',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 6,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.danger,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          onPressed: _stop,
+                          icon: const Icon(Icons.stop_rounded, size: 22),
+                          label: const Text(
+                            'Tour beenden',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

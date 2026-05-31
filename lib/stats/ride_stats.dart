@@ -89,8 +89,18 @@ RideStats computeStats(List<RidePoint> points) {
     final dtSec = dt.inMilliseconds / 1000.0;
     if (dtSec <= 0) continue;
 
+    // Drop segments that span a gap (manual pause / GPS dropout / app
+    // backgrounded for too long). At 1 Hz sampling, anything > 10 s is
+    // almost certainly a hole we shouldn't bridge with a straight-line
+    // distance estimate.
+    if (dtSec > 10) continue;
+
     final meters = _haversineMeters(a.lat, a.lon, b.lat, b.lon);
     final kmh = (meters / dtSec) * 3.6;
+
+    // Sanity cap — a single sample with implausible speed (>250 km/h on a
+    // motorbike) is a GPS glitch, not signal.
+    if (kmh > 250) continue;
 
     if (kmh >= _movingThresholdKmh) {
       totalMeters += meters;

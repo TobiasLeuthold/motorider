@@ -13,7 +13,8 @@ import '../stats/ride_stats.dart';
 class TrackerState {
   const TrackerState({
     required this.isTracking,
-    required this.isPaused,
+    required this.isAutoPaused,
+    required this.isManuallyPaused,
     required this.currentRide,
     required this.stats,
     required this.lastPoint,
@@ -22,22 +23,34 @@ class TrackerState {
 
   const TrackerState.idle()
       : isTracking = false,
-        isPaused = false,
+        isAutoPaused = false,
+        isManuallyPaused = false,
         currentRide = null,
         stats = RideStats.empty,
         lastPoint = null,
         pointsCount = 0;
 
   final bool isTracking;
-  final bool isPaused;
+  /// Speed dropped below threshold for long enough that the cosmetic
+  /// "PAUSIERT" hint should show. Does NOT stop point collection — auto-pause
+  /// is purely UI; data still flows in case the rider resumes movement.
+  final bool isAutoPaused;
+  /// User tapped the Pause button. While true, incoming GPS points are
+  /// dropped — distance/duration don't accumulate through coffee breaks.
+  final bool isManuallyPaused;
   final Ride? currentRide;
   final RideStats stats;
   final RidePoint? lastPoint;
   final int pointsCount;
 
+  /// True if either the user or the auto-pause heuristic has us in a paused
+  /// state. UI uses this for the "PAUSIERT" badge.
+  bool get isPaused => isAutoPaused || isManuallyPaused;
+
   TrackerState copyWith({
     bool? isTracking,
-    bool? isPaused,
+    bool? isAutoPaused,
+    bool? isManuallyPaused,
     Object? currentRide = _sentinel,
     RideStats? stats,
     Object? lastPoint = _sentinel,
@@ -45,7 +58,8 @@ class TrackerState {
   }) {
     return TrackerState(
       isTracking: isTracking ?? this.isTracking,
-      isPaused: isPaused ?? this.isPaused,
+      isAutoPaused: isAutoPaused ?? this.isAutoPaused,
+      isManuallyPaused: isManuallyPaused ?? this.isManuallyPaused,
       currentRide: identical(currentRide, _sentinel)
           ? this.currentRide
           : currentRide as Ride?,
@@ -112,7 +126,8 @@ class RideTracker {
 
     _emit(TrackerState(
       isTracking: true,
-      isPaused: false,
+      isAutoPaused: false,
+      isManuallyPaused: false,
       currentRide: ride,
       stats: RideStats.empty,
       lastPoint: null,
@@ -157,6 +172,12 @@ class RideTracker {
     final ride = _state.currentRide;
     if (ride == null) return;
 
+    // While manually paused we still get fixes but throw them away —
+    // distance/duration must not accumulate through a coffee stop. Auto-pause
+    // does NOT skip points: the rider may resume mid-stride and we want the
+    // ramp-up speed in the data.
+    if (_state.isManuallyPaused) return;
+
     final point = RidePoint(
       rideId: ride.id,
       sequence: _nextSequence++,
@@ -184,29 +205,46 @@ class RideTracker {
     // Auto-pause heuristic.
     final speedKmh = (pos.speed >= 0 ? pos.speed : 0) * 3.6;
     final now = pos.timestamp;
-    final wasPaused = _state.isPaused;
-    bool isPaused;
+    final wasAutoPaused = _state.isAutoPaused;
+    bool isAutoPaused;
     if (speedKmh >= _movingThresholdKmh) {
       _lastMovingTs = now;
-      isPaused = false;
+      isAutoPaused = false;
     } else {
       final lastMoving = _lastMovingTs ?? now;
-      isPaused = now.difference(lastMoving) >= _pauseAfter;
+      isAutoPaused = now.difference(lastMoving) >= _pauseAfter;
     }
 
     final stats = computeStats(_pointsBuffer);
     _emit(_state.copyWith(
-      isPaused: isPaused,
+      isAutoPaused: isAutoPaused,
       stats: stats,
       lastPoint: point,
       pointsCount: _pointsBuffer.length,
     ));
 
-    if (!wasPaused && isPaused) {
+    if (!wasAutoPaused && isAutoPaused) {
       debugPrint('[motorider] RideTracker auto-paused');
-    } else if (wasPaused && !isPaused) {
-      debugPrint('[motorider] RideTracker resumed');
+    } else if (wasAutoPaused && !isAutoPaused) {
+      debugPrint('[motorider] RideTracker resumed (auto)');
     }
+  }
+
+  /// User-initiated pause. Subsequent GPS fixes are dropped until [resumeRide]
+  /// flips the flag back. Polyline will have a gap; stats skip the interval.
+  void pauseRide() {
+    if (!_state.isTracking || _state.isManuallyPaused) return;
+    _emit(_state.copyWith(isManuallyPaused: true));
+    debugPrint('[motorider] RideTracker manually paused');
+  }
+
+  void resumeRide() {
+    if (!_state.isTracking || !_state.isManuallyPaused) return;
+    // Reset the moving-timestamp so the auto-pause heuristic doesn't
+    // immediately flip back to paused on the first fix after resume.
+    _lastMovingTs = DateTime.now();
+    _emit(_state.copyWith(isManuallyPaused: false));
+    debugPrint('[motorider] RideTracker manually resumed');
   }
 
   Future<bool> _ensurePermissions() async {
