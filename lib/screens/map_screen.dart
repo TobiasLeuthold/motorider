@@ -52,10 +52,12 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen>
+    with TickerProviderStateMixin {
   final _controller = MapController();
   LatLng? _userPos;
   bool _locating = false;
+  AnimationController? _rotationReset;
 
   _DatePreset _datePreset = _DatePreset.all;
   RangeValues? _priceFilter; // null = no price filter
@@ -108,6 +110,16 @@ class _MapScreenState extends State<MapScreen> {
                   initialZoom: 8.5,
                   minZoom: 3,
                   maxZoom: 18,
+                  // Google-Maps-style gestures: let the dominant multi-finger
+                  // gesture win instead of zooming and rotating at once, and
+                  // require a deliberate twist before rotation kicks in. This
+                  // stops the map spinning every time you pinch to zoom.
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all,
+                    enableMultiFingerGestureRace: true,
+                    rotationThreshold: 30,
+                    pinchZoomThreshold: 0.3,
+                  ),
                   onPositionChanged: (camera, _) {
                     if (camera.rotation != _rotation) {
                       setState(() => _rotation = camera.rotation);
@@ -195,7 +207,7 @@ class _MapScreenState extends State<MapScreen> {
                     if (_rotation.abs() > 0.5) ...[
                       _CompassButton(
                         rotationDeg: _rotation,
-                        onTap: () => _controller.rotate(0),
+                        onTap: _resetNorth,
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -257,6 +269,30 @@ class _MapScreenState extends State<MapScreen> {
   void _zoom(double delta) {
     final cam = _controller.camera;
     _controller.move(cam.center, (cam.zoom + delta).clamp(3.0, 18.0));
+  }
+
+  /// Smoothly animate the bearing back to north (compass tap), taking the
+  /// shortest way round (e.g. 350° rotates +10°, not −350°).
+  void _resetNorth() {
+    _rotationReset?.dispose();
+    var start = _controller.camera.rotation % 360;
+    if (start > 180) start -= 360;
+    if (start < -180) start += 360;
+    if (start.abs() < 0.01) return;
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _rotationReset = ctrl;
+    final anim = Tween<double>(begin: start, end: 0).animate(
+      CurvedAnimation(parent: ctrl, curve: Curves.easeOut),
+    );
+    anim.addListener(() => _controller.rotate(anim.value));
+    ctrl.forward().whenComplete(() {
+      _controller.rotate(0);
+      ctrl.dispose();
+      if (identical(_rotationReset, ctrl)) _rotationReset = null;
+    });
   }
 
   void _fitTo(List<FillUp> list) {
@@ -386,6 +422,12 @@ class _MapScreenState extends State<MapScreen> {
     final p = LatLng(res.position!.latitude, res.position!.longitude);
     setState(() => _userPos = p);
     _controller.move(p, 14);
+  }
+
+  @override
+  void dispose() {
+    _rotationReset?.dispose();
+    super.dispose();
   }
 }
 
