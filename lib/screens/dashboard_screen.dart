@@ -7,6 +7,7 @@ import '../stats/stats_calculator.dart';
 import '../theme.dart';
 import '../widgets/consumption_chart.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/period_breakdown.dart';
 import '../widgets/stat_card.dart';
 import 'add_fillup_screen.dart';
 import 'home_shell.dart';
@@ -142,6 +143,8 @@ class DashboardScreen extends StatelessWidget {
                     subtitle: ChartMetric.chfPerLiter.subtitle,
                     chart: ConsumptionChart(points: series, metric: ChartMetric.chfPerLiter),
                   ),
+                  const SizedBox(height: 16),
+                  PeriodBreakdown(fillups: fillups),
                   const SizedBox(height: 24),
                 ]),
               ),
