@@ -31,20 +31,18 @@ Future<int> seedFromCsvIfEmpty(FillUpRepository repo) async {
 
 String seedIdForOdometer(int odoKm) => 'csv-$odoKm';
 
-Future<int> _seed(FillUpRepository repo) async {
-  final existing = await repo.count();
-  debugPrint('[motorider] DB has $existing fill-ups before seed');
-
+/// Reads the bundled CSV and returns parsed FillUp rows with the canonical
+/// `csv-<odoKm>` IDs. Used by [seedFromCsvIfEmpty] and by tests that need to
+/// assert against whatever's currently in the CSV (instead of hard-coding a
+/// count that drifts every time a row is added).
+Future<List<FillUp>> parseSeedCsv() async {
   final raw = await rootBundle.loadString(_seedAssetPath);
   final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   final rows = const CsvToListConverter(
     eol: '\n',
     shouldParseNumbers: false,
   ).convert(normalized);
-  if (rows.isEmpty) {
-    debugPrint('[motorider] Seed CSV is empty, nothing to import');
-    return 0;
-  }
+  if (rows.isEmpty) return const [];
 
   final header = rows.first.map((c) => c.toString()).toList();
   int idx(String name) => header.indexOf(name);
@@ -80,6 +78,18 @@ Future<int> _seed(FillUpRepository repo) async {
       notes: s(iNotes).isEmpty ? null : s(iNotes),
       fullTank: s(iFull) != '0',
     ));
+  }
+  return fillups;
+}
+
+Future<int> _seed(FillUpRepository repo) async {
+  final existing = await repo.count();
+  debugPrint('[motorider] DB has $existing fill-ups before seed');
+
+  final fillups = await parseSeedCsv();
+  if (fillups.isEmpty) {
+    debugPrint('[motorider] Seed CSV is empty, nothing to import');
+    return 0;
   }
 
   final inserted = await repo.insertManyIgnore(fillups);
