@@ -5,9 +5,12 @@ import 'package:latlong2/latlong.dart';
 
 import '../main.dart';
 import '../models/fillup.dart';
+import '../models/ride.dart';
+import '../models/ride_point.dart';
 import '../services/location_service.dart';
 import '../theme.dart';
 import 'add_fillup_screen.dart';
+import 'ride_detail_screen.dart';
 
 /// Time windows offered by the date filter.
 enum _DatePreset { all, d30, m3, y1 }
@@ -34,6 +37,10 @@ const _cheapColor = Color(0xFF34D399);
 const _midColor = Color(0xFFFBBF24);
 const _priceyColor = Color(0xFFF87171);
 
+// Cool, distinct colour for ride tracks so they read clearly against the
+// warm orange fuel pins.
+const _rideColor = Color(0xFF38BDF8);
+
 /// Maps a normalised price `t` (0 = cheapest, 1 = priciest) to a marker colour.
 Color priceColor(double t) {
   t = t.clamp(0.0, 1.0);
@@ -52,8 +59,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen>
-    with TickerProviderStateMixin {
+class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final _controller = MapController();
   LatLng? _userPos;
   bool _locating = false;
@@ -63,6 +69,16 @@ class _MapScreenState extends State<MapScreen>
   RangeValues? _priceFilter; // null = no price filter
   double _rotation = 0;
   bool _didInitialFit = false;
+
+  // Layer visibility — keeps the map uncluttered by letting the user pick
+  // what to see.
+  bool _showFuel = true;
+  bool _showRides = true;
+
+  // Ride id → simplified track. Loaded lazily from the points table (rides can
+  // hold thousands of points; we downsample for the overview).
+  final Map<String, List<LatLng>> _ridePaths = {};
+  final Set<String> _ridePathLoading = {};
 
   // Default to Switzerland's geographic center.
   static const _swissCenter = LatLng(46.8182, 8.2275);
@@ -74,10 +90,10 @@ class _MapScreenState extends State<MapScreen>
       body: StreamBuilder<List<FillUp>>(
         initialData: initial,
         stream: widget.stream ?? fillUpRepo.watchAll(),
-        builder: (context, snap) {
-          final all = snap.data ?? const <FillUp>[];
+        builder: (context, fuelSnap) {
+          final allFuel = fuelSnap.data ?? const <FillUp>[];
           // Only real fill-ups with coordinates land on the map.
-          final located = all
+          final located = allFuel
               .where((f) =>
                   f.latitude != null && f.longitude != null && f.liters > 0)
               .toList();
@@ -92,166 +108,231 @@ class _MapScreenState extends State<MapScreen>
           final hasPriceSpread =
               pMin != null && pMax != null && (pMax - pMin) > 0.001;
 
-          final filtered = _applyFilters(located);
+          final filteredFuel = _applyFuelFilters(located);
 
-          // Frame all points the first time data with locations arrives.
-          if (!_didInitialFit && filtered.isNotEmpty) {
-            _didInitialFit = true;
-            WidgetsBinding.instance
-                .addPostFrameCallback((_) => _fitTo(filtered));
-          }
+          return StreamBuilder<List<Ride>>(
+            initialData: rideRepo.latest,
+            stream: rideRepo.watchAll(),
+            builder: (context, rideSnap) {
+              final rides = _filteredRides(rideSnap.data ?? const <Ride>[]);
 
-          return Stack(
-            children: [
-              FlutterMap(
-                mapController: _controller,
-                options: MapOptions(
-                  initialCenter: _swissCenter,
-                  initialZoom: 8.5,
-                  minZoom: 3,
-                  maxZoom: 18,
-                  // Google-Maps-style gestures: let the dominant multi-finger
-                  // gesture win instead of zooming and rotating at once, and
-                  // require a deliberate twist before rotation kicks in. This
-                  // stops the map spinning every time you pinch to zoom.
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.all,
-                    enableMultiFingerGestureRace: true,
-                    rotationThreshold: 30,
-                    pinchZoomThreshold: 0.3,
+              // Lazily load tracks for any visible ride we haven't cached yet.
+              if (_showRides &&
+                  rides.any((r) =>
+                      !_ridePaths.containsKey(r.id) &&
+                      !_ridePathLoading.contains(r.id))) {
+                WidgetsBinding.instance
+                    .addPostFrameCallback((_) => _ensureRidePaths(rides));
+              }
+
+              // Frame the fuel points the first time they arrive.
+              if (!_didInitialFit && _showFuel && filteredFuel.isNotEmpty) {
+                _didInitialFit = true;
+                WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => _fitToPoints(
+                    [for (final f in filteredFuel) _fuelLatLng(f)],
                   ),
-                  onPositionChanged: (camera, _) {
-                    if (camera.rotation != _rotation) {
-                      setState(() => _rotation = camera.rotation);
-                    }
-                  },
-                ),
+                );
+              }
+
+              final nothingShown = (!_showFuel || located.isEmpty) &&
+                  (!_showRides || rides.isEmpty);
+
+              return Stack(
                 children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'ch.tleuthold.motorider',
-                    maxNativeZoom: 19,
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      for (final f in filtered)
-                        Marker(
-                          point: LatLng(f.latitude!, f.longitude!),
-                          width: 34,
-                          height: 34,
-                          child: Builder(
-                            builder: (_) {
-                              final color = hasPriceSpread
-                                  ? priceColor((f.pricePerLiter - pMin!) /
-                                      (pMax! - pMin))
-                                  : AppColors.accent;
-                              return GestureDetector(
-                                onTap: () => _showDetails(f, color),
-                                child: _FuelMarker(color: color),
-                              );
-                            },
-                          ),
+                  FlutterMap(
+                    mapController: _controller,
+                    options: MapOptions(
+                      initialCenter: _swissCenter,
+                      initialZoom: 8.5,
+                      minZoom: 3,
+                      maxZoom: 18,
+                      // Google-Maps-style gestures: let the dominant multi-finger
+                      // gesture win instead of zooming and rotating at once, and
+                      // require a deliberate twist before rotation kicks in.
+                      interactionOptions: const InteractionOptions(
+                        flags: InteractiveFlag.all,
+                        enableMultiFingerGestureRace: true,
+                        rotationThreshold: 30,
+                        pinchZoomThreshold: 0.3,
+                      ),
+                      onPositionChanged: (camera, _) {
+                        if (camera.rotation != _rotation) {
+                          setState(() => _rotation = camera.rotation);
+                        }
+                      },
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'ch.tleuthold.motorider',
+                        maxNativeZoom: 19,
+                      ),
+                      if (_showRides)
+                        PolylineLayer(
+                          polylines: [
+                            for (final r in rides)
+                              if ((_ridePaths[r.id]?.length ?? 0) >= 2)
+                                Polyline(
+                                  points: _ridePaths[r.id]!,
+                                  strokeWidth: 4,
+                                  color: _rideColor,
+                                  borderStrokeWidth: 1.5,
+                                  borderColor:
+                                      Colors.black.withValues(alpha: 0.3),
+                                ),
+                          ],
                         ),
-                      if (_userPos != null)
-                        Marker(
-                          point: _userPos!,
-                          width: 36,
-                          height: 36,
-                          child: const _UserDot(),
-                        ),
+                      MarkerLayer(
+                        markers: [
+                          if (_showFuel)
+                            for (final f in filteredFuel)
+                              Marker(
+                                point: _fuelLatLng(f),
+                                width: 34,
+                                height: 34,
+                                child: Builder(
+                                  builder: (_) {
+                                    final color = hasPriceSpread
+                                        ? priceColor(
+                                            (f.pricePerLiter - pMin!) /
+                                                (pMax! - pMin))
+                                        : AppColors.accent;
+                                    return GestureDetector(
+                                      onTap: () => _showFuelDetails(f, color),
+                                      child: _FuelMarker(color: color),
+                                    );
+                                  },
+                                ),
+                              ),
+                          if (_showRides)
+                            for (final r in rides)
+                              if ((_ridePaths[r.id]?.length ?? 0) >= 2)
+                                Marker(
+                                  point: _ridePaths[r.id]![
+                                      _ridePaths[r.id]!.length ~/ 2],
+                                  width: 30,
+                                  height: 30,
+                                  child: GestureDetector(
+                                    onTap: () => _showRideDetails(r),
+                                    child: const _RideBadge(),
+                                  ),
+                                ),
+                          if (_userPos != null)
+                            Marker(
+                              point: _userPos!,
+                              width: 36,
+                              height: 36,
+                              child: const _UserDot(),
+                            ),
+                        ],
+                      ),
+                      const RichAttributionWidget(
+                        alignment: AttributionAlignment.bottomLeft,
+                        showFlutterMapAttribution: false,
+                        attributions: [
+                          TextSourceAttribution('© OpenStreetMap')
+                        ],
+                      ),
                     ],
                   ),
-                  const RichAttributionWidget(
-                    alignment: AttributionAlignment.bottomLeft,
-                    showFlutterMapAttribution: false,
-                    attributions: [TextSourceAttribution('© OpenStreetMap')],
+
+                  // Top filter / legend card.
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: _FilterCard(
+                          showFuel: _showFuel,
+                          showRides: _showRides,
+                          onToggleFuel: () =>
+                              setState(() => _showFuel = !_showFuel),
+                          onToggleRides: () =>
+                              setState(() => _showRides = !_showRides),
+                          fuelCount: filteredFuel.length,
+                          rideCount: rides.length,
+                          datePreset: _datePreset,
+                          onDatePreset: (p) => setState(() => _datePreset = p),
+                          priceActive: _priceFilter != null,
+                          onPriceTap: (_showFuel && hasPriceSpread)
+                              ? () => _openPriceFilter(pMin!, pMax!)
+                              : null,
+                          showLegend: _showFuel && hasPriceSpread,
+                          priceMin: pMin,
+                          priceMax: pMax,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  if (nothingShown) const Center(child: _NothingHint()),
+
+                  // Map controls (compass / zoom / fit) + locate FAB.
+                  Positioned(
+                    right: 16,
+                    bottom: 24,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_rotation.abs() > 0.5) ...[
+                          _CompassButton(
+                            rotationDeg: _rotation,
+                            onTap: _resetNorth,
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                        _MapButton(
+                          icon: Icons.add_rounded,
+                          tooltip: 'Reinzoomen',
+                          onTap: () => _zoom(1),
+                        ),
+                        const SizedBox(height: 8),
+                        _MapButton(
+                          icon: Icons.remove_rounded,
+                          tooltip: 'Rauszoomen',
+                          onTap: () => _zoom(-1),
+                        ),
+                        const SizedBox(height: 8),
+                        _MapButton(
+                          icon: Icons.fit_screen_rounded,
+                          tooltip: 'Alle anzeigen',
+                          onTap: () {
+                            final pts = _visiblePoints(filteredFuel, rides);
+                            if (pts.isNotEmpty) _fitToPoints(pts);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        FloatingActionButton(
+                          heroTag: 'locate-me',
+                          onPressed: _locating ? null : _locateMe,
+                          child: _locating
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.5, color: Colors.black),
+                                )
+                              : const Icon(Icons.my_location_rounded),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-              ),
-
-              // Top filter / legend card.
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _FilterCard(
-                      shown: filtered.length,
-                      total: located.length,
-                      datePreset: _datePreset,
-                      onDatePreset: (p) => setState(() => _datePreset = p),
-                      priceActive: _priceFilter != null,
-                      onPriceTap: hasPriceSpread
-                          ? () => _openPriceFilter(pMin!, pMax!)
-                          : null,
-                      showLegend: hasPriceSpread,
-                      priceMin: pMin,
-                      priceMax: pMax,
-                    ),
-                  ),
-                ),
-              ),
-
-              if (located.isEmpty) const Center(child: _NoLocationsHint()),
-
-              // Map controls (compass / zoom / fit) + locate FAB.
-              Positioned(
-                right: 16,
-                bottom: 24,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_rotation.abs() > 0.5) ...[
-                      _CompassButton(
-                        rotationDeg: _rotation,
-                        onTap: _resetNorth,
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    _MapButton(
-                      icon: Icons.add_rounded,
-                      tooltip: 'Reinzoomen',
-                      onTap: () => _zoom(1),
-                    ),
-                    const SizedBox(height: 8),
-                    _MapButton(
-                      icon: Icons.remove_rounded,
-                      tooltip: 'Rauszoomen',
-                      onTap: () => _zoom(-1),
-                    ),
-                    const SizedBox(height: 8),
-                    _MapButton(
-                      icon: Icons.fit_screen_rounded,
-                      tooltip: 'Alle anzeigen',
-                      onTap: filtered.isEmpty ? null : () => _fitTo(filtered),
-                    ),
-                    const SizedBox(height: 10),
-                    FloatingActionButton(
-                      heroTag: 'locate-me',
-                      onPressed: _locating ? null : _locateMe,
-                      child: _locating
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2.5, color: Colors.black),
-                            )
-                          : const Icon(Icons.my_location_rounded),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              );
+            },
           );
         },
       ),
     );
   }
 
-  List<FillUp> _applyFilters(List<FillUp> located) {
+  LatLng _fuelLatLng(FillUp f) => LatLng(f.latitude!, f.longitude!);
+
+  List<FillUp> _applyFuelFilters(List<FillUp> located) {
     final window = _datePreset.window;
     final cutoff = window == null ? null : DateTime.now().subtract(window);
     return located.where((f) {
@@ -264,6 +345,63 @@ class _MapScreenState extends State<MapScreen>
       }
       return true;
     }).toList();
+  }
+
+  /// Completed rides within the current date window.
+  List<Ride> _filteredRides(List<Ride> rides) {
+    final window = _datePreset.window;
+    final cutoff = window == null ? null : DateTime.now().subtract(window);
+    return rides
+        .where((r) =>
+            r.endedAt != null &&
+            (cutoff == null || !r.startedAt.isBefore(cutoff)))
+        .toList();
+  }
+
+  Future<void> _ensureRidePaths(List<Ride> rides) async {
+    final toLoad = rides
+        .where((r) =>
+            !_ridePaths.containsKey(r.id) && !_ridePathLoading.contains(r.id))
+        .toList();
+    if (toLoad.isEmpty) return;
+    _ridePathLoading.addAll(toLoad.map((r) => r.id));
+    for (final r in toLoad) {
+      final pts = await rideRepo.getPoints(r.id);
+      if (!mounted) return;
+      _ridePaths[r.id] = _downsample(pts);
+      _ridePathLoading.remove(r.id);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Stride-decimate a track down to ~400 points (always keeping the last one)
+  /// so the overview stays smooth even for multi-thousand-point rides.
+  List<LatLng> _downsample(List<RidePoint> pts) {
+    if (pts.isEmpty) return const [];
+    const target = 400;
+    final stride = (pts.length / target).ceil().clamp(1, 1 << 30);
+    final out = <LatLng>[
+      for (var i = 0; i < pts.length; i += stride) LatLng(pts[i].lat, pts[i].lon)
+    ];
+    final last = pts.last;
+    if (out.isEmpty ||
+        out.last.latitude != last.lat ||
+        out.last.longitude != last.lon) {
+      out.add(LatLng(last.lat, last.lon));
+    }
+    return out;
+  }
+
+  List<LatLng> _visiblePoints(List<FillUp> fuel, List<Ride> rides) {
+    final pts = <LatLng>[];
+    if (_showFuel) pts.addAll(fuel.map(_fuelLatLng));
+    if (_showRides) {
+      for (final r in rides) {
+        final path = _ridePaths[r.id];
+        if (path != null) pts.addAll(path);
+      }
+    }
+    return pts;
   }
 
   void _zoom(double delta) {
@@ -295,9 +433,8 @@ class _MapScreenState extends State<MapScreen>
     });
   }
 
-  void _fitTo(List<FillUp> list) {
-    if (list.isEmpty) return;
-    final pts = [for (final f in list) LatLng(f.latitude!, f.longitude!)];
+  void _fitToPoints(List<LatLng> pts) {
+    if (pts.isEmpty) return;
     if (pts.length == 1) {
       _controller.move(pts.first, 14);
       return;
@@ -388,20 +525,39 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
-  void _showDetails(FillUp f, Color color) {
+  void _showFuelDetails(FillUp f, Color color) {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => _DetailSheet(
+      builder: (ctx) => _FuelSheet(
         fillup: f,
         color: color,
         onEdit: () {
           Navigator.of(ctx).pop();
           Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => AddFillUpScreen(existing: f)),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showRideDetails(Ride r) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _RideSheet(
+        ride: r,
+        onOpen: () {
+          Navigator.of(ctx).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => RideDetailScreen(rideId: r.id)),
           );
         },
       ),
@@ -431,11 +587,15 @@ class _MapScreenState extends State<MapScreen>
   }
 }
 
-/// Top card: count, date presets, price filter toggle, colour legend.
+/// Top card: layer toggles, count, date presets, price filter, colour legend.
 class _FilterCard extends StatelessWidget {
   const _FilterCard({
-    required this.shown,
-    required this.total,
+    required this.showFuel,
+    required this.showRides,
+    required this.onToggleFuel,
+    required this.onToggleRides,
+    required this.fuelCount,
+    required this.rideCount,
     required this.datePreset,
     required this.onDatePreset,
     required this.priceActive,
@@ -445,8 +605,12 @@ class _FilterCard extends StatelessWidget {
     required this.priceMax,
   });
 
-  final int shown;
-  final int total;
+  final bool showFuel;
+  final bool showRides;
+  final VoidCallback onToggleFuel;
+  final VoidCallback onToggleRides;
+  final int fuelCount;
+  final int rideCount;
   final _DatePreset datePreset;
   final ValueChanged<_DatePreset> onDatePreset;
   final bool priceActive;
@@ -457,6 +621,11 @@ class _FilterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final summary = <String>[
+      if (showFuel) '$fuelCount Tankstopps',
+      if (showRides) '$rideCount Touren',
+    ].join(' · ');
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
@@ -481,15 +650,31 @@ class _FilterCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Text(
-                '$shown von $total',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
-                ),
+              _LayerToggle(
+                icon: Icons.local_gas_station_rounded,
+                active: showFuel,
+                onTap: onToggleFuel,
+                tooltip: 'Tankstopps',
+                activeColor: AppColors.accent,
+              ),
+              const SizedBox(width: 8),
+              _LayerToggle(
+                icon: Icons.route_rounded,
+                active: showRides,
+                onTap: onToggleRides,
+                tooltip: 'Touren',
+                activeColor: _rideColor,
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            summary.isEmpty ? 'Keine Ebene aktiv' : summary,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textMuted,
+            ),
           ),
           const SizedBox(height: 10),
           SingleChildScrollView(
@@ -519,6 +704,52 @@ class _FilterCard extends StatelessWidget {
             _PriceLegend(min: priceMin!, max: priceMax!),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Small square toggle for a map layer (fuel / rides).
+class _LayerToggle extends StatelessWidget {
+  const _LayerToggle({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+    required this.tooltip,
+    required this.activeColor,
+  });
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+  final String tooltip;
+  final Color activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '$tooltip ${active ? 'ausblenden' : 'einblenden'}',
+      child: Material(
+        color: active ? activeColor : AppColors.surfaceHi,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: active ? activeColor : AppColors.gridLine,
+              ),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: active ? Colors.black : AppColors.textMuted,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -609,8 +840,8 @@ class _PriceLegend extends StatelessWidget {
   }
 }
 
-class _DetailSheet extends StatelessWidget {
-  const _DetailSheet({
+class _FuelSheet extends StatelessWidget {
+  const _FuelSheet({
     required this.fillup,
     required this.color,
     required this.onEdit,
@@ -710,6 +941,102 @@ class _DetailSheet extends StatelessWidget {
   }
 }
 
+class _RideSheet extends StatelessWidget {
+  const _RideSheet({required this.ride, required this.onOpen});
+  final Ride ride;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final dateFmt = DateFormat('dd.MM.yyyy');
+    final timeFmt = DateFormat('HH:mm');
+    final r = ride;
+    final title = r.title?.isNotEmpty == true
+        ? r.title!
+        : '${dateFmt.format(r.startedAt)} · ${timeFmt.format(r.startedAt)}';
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _rideColor.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _rideColor, width: 2),
+                  ),
+                  child: const Icon(Icons.route_rounded,
+                      color: AppColors.text, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                        ),
+                      ),
+                      Text(
+                        '${dateFmt.format(r.startedAt)} · '
+                        '${timeFmt.format(r.startedAt)}',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _Metric(
+                    label: 'Distanz',
+                    value: '${r.distanceKm.toStringAsFixed(1)} km'),
+                _Metric(label: 'Dauer', value: _fmtDuration(r.totalDuration)),
+                _Metric(
+                    label: 'Ø km/h',
+                    value: r.avgMovingSpeedKmh.toStringAsFixed(0)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _Metric(
+                    label: 'Max km/h',
+                    value: r.maxSpeedKmh.toStringAsFixed(0)),
+                _Metric(
+                  label: 'Höhenmeter',
+                  value: r.elevationGainM == null
+                      ? '–'
+                      : '${r.elevationGainM!.toStringAsFixed(0)} m',
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: onOpen,
+              icon: const Icon(Icons.open_in_full_rounded, size: 18),
+              label: const Text('Tour-Details'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Metric extends StatelessWidget {
   const _Metric({required this.label, required this.value});
   final String label;
@@ -756,6 +1083,30 @@ class _FuelMarker extends StatelessWidget {
       ),
       child: const Icon(Icons.local_gas_station_rounded,
           size: 17, color: AppColors.bg),
+    );
+  }
+}
+
+/// Tappable badge sitting on a ride's track midpoint.
+class _RideBadge extends StatelessWidget {
+  const _RideBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: _rideColor,
+        border: Border.all(color: Colors.white, width: 2.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Icon(Icons.route_rounded, size: 15, color: AppColors.bg),
     );
   }
 }
@@ -829,8 +1180,8 @@ class _CompassButton extends StatelessWidget {
   }
 }
 
-class _NoLocationsHint extends StatelessWidget {
-  const _NoLocationsHint();
+class _NothingHint extends StatelessWidget {
+  const _NothingHint();
 
   @override
   Widget build(BuildContext context) {
@@ -845,11 +1196,12 @@ class _NoLocationsHint extends StatelessWidget {
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.location_off_rounded, color: AppColors.textMuted),
+          Icon(Icons.layers_clear_rounded, color: AppColors.textMuted),
           SizedBox(width: 12),
           Flexible(
             child: Text(
-              'Noch keine Standorte. Füge bei einer Tankfüllung einen Ort hinzu.',
+              'Nichts anzuzeigen. Erfasse einen Ort bei einer Tankfüllung '
+              'oder zeichne eine Tour auf.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 13),
             ),
           ),
@@ -889,4 +1241,13 @@ class _UserDot extends StatelessWidget {
       ),
     );
   }
+}
+
+String _fmtDuration(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes.remainder(60);
+  final s = d.inSeconds.remainder(60);
+  if (h > 0) return '${h}h ${m}m';
+  if (m > 0) return '${m}m ${s}s';
+  return '${s}s';
 }
