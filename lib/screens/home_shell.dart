@@ -4,6 +4,7 @@ import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'fuel_log_screen.dart';
 import 'map_screen.dart';
+import 'settings_screen.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -15,6 +16,12 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = const [
@@ -23,7 +30,30 @@ class _HomeShellState extends State<HomeShell> {
       MapScreen(),
     ];
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: Stack(
+        children: [
+          IndexedStack(index: _index, children: pages),
+          // Settings affordance sits above each tab's custom header. Padding
+          // matches TabHeader's top inset so it lines up with the header text.
+          Positioned(
+            top: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 44, right: 8),
+                child: IconButton(
+                  tooltip: 'Einstellungen',
+                  icon: const Icon(
+                    Icons.settings_rounded,
+                    color: AppColors.textMuted,
+                  ),
+                  onPressed: _openSettings,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
