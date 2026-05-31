@@ -1,7 +1,7 @@
 // End-to-end test that uses the REAL repository, REAL seed loader, and REAL
 // sqflite (via FFI on host) to verify that:
 //   1. The CSV asset is bundled and parseable.
-//   2. The seed inserts all 11 rows.
+//   2. The seed inserts all 12 rows.
 //   3. The repo emits the seed data through `watchAll()`.
 //   4. The Dashboard, mounted with the real stream, shows real stat values.
 //
@@ -58,10 +58,11 @@ void main() {
     expect(await repo.count(), 11, reason: 'pre-seed legacy rows in place');
 
     // Run the current seed. Reconcile should delete the legacy rows and
-    // insert the canonical `csv-<odo>` ones — total stays at 11, not 22.
+    // insert the canonical `csv-<odo>` ones. The 11 legacy odometers collapse
+    // to 11 canonical rows; the CSV's extra 2465 km row adds one more → 12.
     await seedFromCsvIfEmpty(repo);
 
-    expect(await repo.count(), 11,
+    expect(await repo.count(), 12,
         reason: 'must NOT double the rows; reconcile should run');
 
     final all = await repo.getAll();
@@ -72,16 +73,16 @@ void main() {
     }
   });
 
-  test('seed imports 11 rows from CSV', () async {
+  test('seed imports 12 rows from CSV', () async {
     final repo = FillUpRepository(AppDatabase.instance);
     final before = await repo.count();
     expect(before, 0, reason: 'fresh DB should be empty');
 
     final inserted = await seedFromCsvIfEmpty(repo);
-    expect(inserted, 11, reason: 'CSV has 11 rows total');
+    expect(inserted, 12, reason: 'CSV has 12 rows total');
 
     final after = await repo.count();
-    expect(after, 11);
+    expect(after, 12);
   });
 
   test('seed is idempotent when called twice (no duplicates)', () async {
@@ -89,7 +90,7 @@ void main() {
     await seedFromCsvIfEmpty(repo);
     final inserted2 = await seedFromCsvIfEmpty(repo);
     expect(inserted2, 0, reason: 'second call should insert nothing');
-    expect(await repo.count(), 11);
+    expect(await repo.count(), 12);
   });
 
   test('repo emits seed data to new subscribers (initial replay)', () async {
@@ -97,9 +98,9 @@ void main() {
     await seedFromCsvIfEmpty(repo);
     await repo.primeStream();
     final first = await repo.watchAll().first;
-    expect(first.length, 11);
+    expect(first.length, 12);
     expect(first.map((f) => f.odometerKm).toList(),
-        containsAll([47, 210, 385, 685, 946, 1126, 1317, 1511, 1730, 1967, 2223]));
+        containsAll([47, 210, 385, 685, 946, 1126, 1317, 1511, 1730, 1967, 2223, 2465]));
   });
 
   testWidgets('Dashboard, mounted with real stream after seed, shows stats',
@@ -131,11 +132,11 @@ void main() {
     // 2'223 km is the latest odometer reading in the seed.
     expect(find.textContaining('2'), findsWidgets,
         reason: 'expected odometer or other numeric stat to render');
-    // 11 fill-ups badge in the "Getankt total" sub line.
-    expect(find.textContaining('11 Tankfüllungen'), findsOneWidget);
+    // 12 fill-ups badge in the "Getankt total" sub line.
+    expect(find.textContaining('12 Tankfüllungen'), findsOneWidget);
   });
 
-  testWidgets('FuelLog, mounted with real stream, shows 11 entries',
+  testWidgets('FuelLog, mounted with real stream, shows 12 entries',
       (tester) async {
     final repo = FillUpRepository(AppDatabase.instance);
     await seedFromCsvIfEmpty(repo);
@@ -156,7 +157,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('11 Einträge'), findsOneWidget);
+    expect(find.text('12 Einträge'), findsOneWidget);
     expect(find.text('Startkilometer'), findsOneWidget);
   });
 }
