@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
+
 import '../data/fillup_repository.dart';
 import '../models/fillup.dart';
 import 'nas_settings.dart';
@@ -41,7 +43,9 @@ class SyncResult {
 /// transaction, and `markSynced` only runs after the server acked.
 class SyncService {
   SyncService(this._repo, this._settings)
-      : _client = PocketBaseClient(_settings);
+      : _client = PocketBaseClient(_settings) {
+    _attachAutoTriggers();
+  }
 
   final FillUpRepository _repo;
   final NasSettings _settings;
@@ -53,6 +57,34 @@ class SyncService {
   Stream<SyncState> get changes => _controller.stream;
 
   bool _inFlight = false;
+
+  // Auto-trigger state ───────────────────────────────────────────────────
+  StreamSubscription<void>? _localWritesSub;
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
+  Timer? _writeDebounce;
+  bool _wasOnline = true;
+  static const _debounce = Duration(milliseconds: 1500);
+
+  void _attachAutoTriggers() {
+    // After every local write: schedule a sync. Multiple writes within the
+    // debounce window collapse into one push.
+    _localWritesSub = _repo.localWrites.listen((_) {
+      _writeDebounce?.cancel();
+      _writeDebounce = Timer(_debounce, () {
+        if (_settings.hasCredentials) syncOnce();
+      });
+    });
+
+    // When connectivity flips from "none" back to anything else, fire a
+    // sync — covers the phone-came-out-of-airplane-mode case.
+    _connSub = Connectivity().onConnectivityChanged.listen((results) {
+      final online = results.any((r) => r != ConnectivityResult.none);
+      if (online && !_wasOnline && _settings.hasCredentials) {
+        syncOnce();
+      }
+      _wasOnline = online;
+    });
+  }
 
   Future<SyncResult> syncOnce() async {
     if (_inFlight) {
@@ -135,6 +167,9 @@ class SyncService {
   }
 
   Future<void> dispose() async {
+    _writeDebounce?.cancel();
+    await _localWritesSub?.cancel();
+    await _connSub?.cancel();
     await _controller.close();
   }
 }

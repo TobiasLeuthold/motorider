@@ -56,8 +56,36 @@ Future<void> main() async {
   runApp(const MotoRiderApp());
 }
 
-class MotoRiderApp extends StatelessWidget {
+class MotoRiderApp extends StatefulWidget {
   const MotoRiderApp({super.key});
+
+  @override
+  State<MotoRiderApp> createState() => _MotoRiderAppState();
+}
+
+class _MotoRiderAppState extends State<MotoRiderApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Foreground after backgrounding → opportunistically pull anything new
+    // and push anything that piled up while we were away.
+    if (state == AppLifecycleState.resumed && nasSettings.hasCredentials) {
+      // ignore: unawaited_futures
+      syncService.syncOnce();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

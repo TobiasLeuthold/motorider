@@ -11,11 +11,18 @@ class FillUpRepository {
   final AppDatabase _database;
 
   final _controller = StreamController<List<FillUp>>.broadcast();
+  final _localWritesController = StreamController<void>.broadcast();
   List<FillUp> _latest = const [];
 
   /// Last emitted list. Useful for StreamBuilder's `initialData` so the UI
   /// doesn't flash an empty state on subscribe.
   List<FillUp> get latest => _latest;
+
+  /// Fires whenever a USER-driven write completes (upsert / insertMany /
+  /// insertManyIgnore / delete). Used by [SyncService] to schedule a
+  /// debounced sync. Notably does NOT fire from [applyServerRecord] — that
+  /// path is itself part of a sync run, and re-triggering would loop.
+  Stream<void> get localWrites => _localWritesController.stream;
 
   /// Stream that emits the cached state immediately to every new subscriber
   /// (broadcast streams normally only see emissions after subscribe time),
@@ -58,6 +65,7 @@ class FillUpRepository {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
     await _emit();
+    _localWritesController.add(null);
   }
 
   Future<void> insertMany(List<FillUp> fillups) async {
@@ -77,6 +85,7 @@ class FillUpRepository {
     }
     await batch.commit(noResult: true);
     await _emit();
+    _localWritesController.add(null);
   }
 
   /// Inserts rows only if their IDs don't already exist. Used by the CSV seed
@@ -98,7 +107,10 @@ class FillUpRepository {
     }
     final results = await batch.commit();
     final inserted = results.where((r) => r is int && r != 0).length;
-    if (inserted > 0) await _emit();
+    if (inserted > 0) {
+      await _emit();
+      _localWritesController.add(null);
+    }
     return inserted;
   }
 
@@ -118,6 +130,7 @@ class FillUpRepository {
       whereArgs: [id],
     );
     await _emit();
+    _localWritesController.add(null);
   }
 
   /// Local-only cleanup that should NOT propagate to the server. Used by the
