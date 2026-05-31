@@ -174,55 +174,18 @@ class RideTracker {
     );
     await _repo.upsert(finalized);
 
-    // Snapshot the points buffer for weather enrichment before we clear it.
-    final snapshot = List<RidePoint>.from(_pointsBuffer);
     _emit(const TrackerState.idle());
     _pointsBuffer.clear();
 
     // Fire-and-forget weather enrichment. The first sync push has already
     // been scheduled by the upsert above (debounced 1.5 s); when weather
-    // arrives we upsert the ride again, which triggers a second push. Cheap
-    // and resilient — if Open-Meteo is unreachable the ride still syncs,
-    // just without weather.
+    // arrives we upsert the ride again, which triggers a second push. If
+    // Open-Meteo is unreachable the ride still syncs without weather, and
+    // the detail screen's "Wetter abrufen" retry button can fix it later.
     // ignore: unawaited_futures
-    _enrichWithWeather(finalized.id, snapshot);
+    WeatherService.enrichRide(repo: _repo, rideId: finalized.id);
 
     return finalized;
-  }
-
-  Future<void> _enrichWithWeather(String rideId, List<RidePoint> points) async {
-    if (points.isEmpty) return;
-    final first = points.first;
-    final last = points.last;
-    final summary = await WeatherService.fetch(
-      lat: first.lat,
-      lon: first.lon,
-      startUtc: first.ts.toUtc(),
-      endUtc: last.ts.toUtc(),
-    );
-    if (summary == null) {
-      debugPrint('[motorider] WeatherService returned no data for $rideId');
-      return;
-    }
-
-    final current = await _repo.getById(rideId);
-    if (current == null) return;
-    final enriched = current.copyWith(
-      tempMinC: summary.tempMinC,
-      tempMaxC: summary.tempMaxC,
-      tempAvgC: summary.tempAvgC,
-      precipitationMm: summary.precipitationMm,
-      windMaxKmh: summary.windMaxKmh,
-      weatherCode: summary.weatherCode,
-      weatherFetchedAt: DateTime.now(),
-    );
-    await _repo.upsert(enriched);
-    debugPrint(
-      '[motorider] Weather enriched: '
-      'temp ${summary.tempMinC?.toStringAsFixed(0)}–${summary.tempMaxC?.toStringAsFixed(0)}°C, '
-      'precip ${summary.precipitationMm?.toStringAsFixed(1)}mm, '
-      'code ${summary.weatherCode}',
-    );
   }
 
   void _onPosition(Position pos) async {

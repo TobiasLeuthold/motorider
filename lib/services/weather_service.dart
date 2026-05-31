@@ -6,6 +6,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../data/ride_repository.dart';
+import '../models/ride_point.dart';
+
 /// Per-ride weather summary computed by [WeatherService] from the hours that
 /// overlap the ride window. All fields are nullable so we can serialize
 /// "data was fetched, that field happened to be missing" distinctly from
@@ -28,27 +31,111 @@ class WeatherSummary {
   final int? weatherCode;
 }
 
+/// Number of points sampled along the polyline for multi-location queries.
+/// 5 is a sweet spot for Swiss-scale rides: a 100 km Pässe-tour gets samples
+/// every ~20 km, enough to catch a valley-vs-alpine weather split. Bumping
+/// this higher hits Open-Meteo's free-tier rate limit faster.
+const _maxSamplePoints = 5;
+
+/// Weather conditions captured at one sample point along the ride. The
+/// timestamp is the rider's clock at that location; we look up the matching
+/// hourly forecast for it.
+class _SamplePointWeather {
+  const _SamplePointWeather({
+    required this.tempC,
+    required this.precipitationMm,
+    required this.windKmh,
+    required this.weatherCode,
+  });
+  final double? tempC;
+  final double? precipitationMm;
+  final double? windKmh;
+  final int? weatherCode;
+}
+
 /// Fetches weather along the ride and aggregates it into a single summary.
 ///
-/// Uses Open-Meteo's forecast endpoint (which serves both `past_days` and
-/// near-future) so a ride that just ended a minute ago resolves on the same
-/// call as one from last week. No API key required.
-///
-/// Spatial resolution is one location (the ride's starting GPS fix) — fine
-/// for typical Swiss rides under ~100 km radius; the grid is ~10 km wide.
-/// Adding multi-point sampling is a one-line change to use the comma-list
-/// form of `latitude`/`longitude` parameters.
+/// Strategy: sample up to [_maxSamplePoints] points evenly through the GPS
+/// trace, hit Open-Meteo concurrently for each, pick the hour at each
+/// location that matches the rider's actual timestamp there, then aggregate.
+/// This captures geographic variance — a Sustenpass climb where the bottom
+/// is 22°C and the top is 8°C — that single-location sampling misses.
 class WeatherService {
-  static Future<WeatherSummary?> fetch({
-    required double lat,
-    required double lon,
-    required DateTime startUtc,
-    required DateTime endUtc,
+  /// Public entry point. Pulls the ride + its points from [repo], runs the
+  /// enrichment, and persists the result. Returns true on successful update.
+  ///
+  /// Also used by the detail screen's "Wetter abrufen" retry button — same
+  /// code path either way, so a retry behaves identically to first-time
+  /// enrichment.
+  static Future<bool> enrichRide({
+    required RideRepository repo,
+    required String rideId,
   }) async {
+    final ride = await repo.getById(rideId);
+    if (ride == null) return false;
+    final points = await repo.getPoints(rideId);
+    if (points.isEmpty) {
+      debugPrint('[motorider] enrichRide: $rideId has no points, skipping');
+      return false;
+    }
+
+    final summary = await fetchForRide(points);
+    if (summary == null) return false;
+
+    final enriched = ride.copyWith(
+      tempMinC: summary.tempMinC,
+      tempMaxC: summary.tempMaxC,
+      tempAvgC: summary.tempAvgC,
+      precipitationMm: summary.precipitationMm,
+      windMaxKmh: summary.windMaxKmh,
+      weatherCode: summary.weatherCode,
+      weatherFetchedAt: DateTime.now(),
+    );
+    await repo.upsert(enriched);
+    debugPrint(
+      '[motorider] enrichRide $rideId: '
+      'temp ${summary.tempMinC?.toStringAsFixed(0)}–${summary.tempMaxC?.toStringAsFixed(0)}°C, '
+      'precip ${summary.precipitationMm?.toStringAsFixed(1)}mm, '
+      'wind ${summary.windMaxKmh?.toStringAsFixed(0)}km/h, '
+      'code ${summary.weatherCode}',
+    );
+    return true;
+  }
+
+  /// Core multi-location fetch. Exposed for testability + so the tracker can
+  /// call it directly without the repo round-trip.
+  static Future<WeatherSummary?> fetchForRide(List<RidePoint> points) async {
+    final samples = _pickSamplePoints(points);
+    final futures = samples.map(_fetchAtPoint).toList();
+    final results = await Future.wait(futures);
+
+    final valid = results.whereType<_SamplePointWeather>().toList();
+    if (valid.isEmpty) {
+      debugPrint('[motorider] WeatherService: all ${samples.length} samples failed');
+      return null;
+    }
+    return _aggregate(valid);
+  }
+
+  /// Pick up to [_maxSamplePoints] evenly spaced points (by sequence index)
+  /// from the polyline. If the ride is shorter than that, sample every point.
+  static List<RidePoint> _pickSamplePoints(List<RidePoint> points) {
+    if (points.length <= _maxSamplePoints) return points;
+    final samples = <RidePoint>[];
+    for (var i = 0; i < _maxSamplePoints; i++) {
+      // Evenly spaced including both endpoints.
+      final idx =
+          ((i / (_maxSamplePoints - 1)) * (points.length - 1)).round();
+      samples.add(points[idx]);
+    }
+    return samples;
+  }
+
+  static Future<_SamplePointWeather?> _fetchAtPoint(RidePoint point) async {
     final uri = Uri.parse('https://api.open-meteo.com/v1/forecast').replace(
       queryParameters: {
-        'latitude': lat.toStringAsFixed(4),
-        'longitude': lon.toStringAsFixed(4),
+        'latitude': point.lat.toStringAsFixed(4),
+        'longitude': point.lon.toStringAsFixed(4),
         'hourly':
             'temperature_2m,precipitation,wind_speed_10m,weathercode',
         'past_days': '14',
@@ -64,7 +151,7 @@ class WeatherService {
     try {
       resp = await http.get(uri).timeout(const Duration(seconds: 10));
     } on TimeoutException {
-      debugPrint('[motorider] WeatherService timed out for $lat,$lon');
+      debugPrint('[motorider] WeatherService timed out for ${point.lat},${point.lon}');
       return null;
     } on SocketException catch (e) {
       debugPrint('[motorider] WeatherService network error: ${e.message}');
@@ -74,8 +161,7 @@ class WeatherService {
       return null;
     }
     if (resp.statusCode != 200) {
-      debugPrint('[motorider] WeatherService HTTP ${resp.statusCode}: '
-          '${resp.body.substring(0, math.min(120, resp.body.length))}');
+      debugPrint('[motorider] WeatherService HTTP ${resp.statusCode}');
       return null;
     }
 
@@ -94,56 +180,72 @@ class WeatherService {
     final winds = (hourly['wind_speed_10m'] as List?) ?? const [];
     final codes = (hourly['weathercode'] as List?) ?? const [];
 
-    // Open-Meteo timestamps are in UTC when timezone=UTC. Match against the
-    // ride window with one-hour slack on each side (so a ride starting at
-    // 14:55 still sees the 14:00 row).
-    final windowStart = startUtc.subtract(const Duration(hours: 1));
-    final windowEnd = endUtc.add(const Duration(hours: 1));
+    // Find the closest hour to this sample's actual timestamp. Open-Meteo
+    // serves UTC hours when timezone=UTC.
+    final targetUtc = point.ts.toUtc();
+    int? bestIdx;
+    Duration bestGap = const Duration(days: 999);
+    for (var i = 0; i < times.length; i++) {
+      final t = DateTime.parse('${times[i]}Z');
+      final gap = (t.difference(targetUtc)).abs();
+      if (gap < bestGap) {
+        bestGap = gap;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx == null) return null;
+    // If even the closest hour is more than 90 min away, the API doesn't
+    // have data for this window yet (recent ride, hourly slot not published).
+    if (bestGap > const Duration(minutes: 90)) {
+      debugPrint('[motorider] WeatherService: closest hour ${bestGap.inMinutes}min off for ${point.lat},${point.lon}');
+      return null;
+    }
+    final i = bestIdx;
 
+    return _SamplePointWeather(
+      tempC: (i < temps.length) ? (temps[i] as num?)?.toDouble() : null,
+      precipitationMm: (i < precs.length) ? (precs[i] as num?)?.toDouble() : null,
+      windKmh: (i < winds.length) ? (winds[i] as num?)?.toDouble() : null,
+      weatherCode: (i < codes.length) ? (codes[i] as num?)?.toInt() : null,
+    );
+  }
+
+  static WeatherSummary _aggregate(List<_SamplePointWeather> samples) {
     double? tempMin, tempMax;
     double tempSum = 0;
     var tempCount = 0;
-    var precSum = 0.0;
+    double precMax = 0;
     double? windMax;
     int worstCode = 0;
-    var matched = 0;
 
-    for (var i = 0; i < times.length; i++) {
-      final t = DateTime.parse('${times[i]}Z');
-      if (t.isBefore(windowStart) || t.isAfter(windowEnd)) continue;
-      matched++;
-
-      final temp = (i < temps.length) ? (temps[i] as num?)?.toDouble() : null;
-      final prec = (i < precs.length) ? (precs[i] as num?)?.toDouble() : null;
-      final wind = (i < winds.length) ? (winds[i] as num?)?.toDouble() : null;
-      final code = (i < codes.length) ? (codes[i] as num?)?.toInt() : null;
-
-      if (temp != null) {
-        tempMin = tempMin == null ? temp : math.min(tempMin, temp);
-        tempMax = tempMax == null ? temp : math.max(tempMax, temp);
-        tempSum += temp;
+    for (final s in samples) {
+      final t = s.tempC;
+      if (t != null) {
+        tempMin = tempMin == null ? t : math.min(tempMin, t);
+        tempMax = tempMax == null ? t : math.max(tempMax, t);
+        tempSum += t;
         tempCount++;
       }
-      if (prec != null) precSum += prec;
-      if (wind != null) {
-        windMax = windMax == null ? wind : math.max(windMax, wind);
+      // Precipitation: "worst encountered" across the ride is the most
+      // useful summary for "did I get rained on" — summing would
+      // double-count overlapping hours across nearby samples.
+      final p = s.precipitationMm;
+      if (p != null && p > precMax) precMax = p;
+      final w = s.windKmh;
+      if (w != null) {
+        windMax = windMax == null ? w : math.max(windMax, w);
       }
-      if (code != null && weatherSeverity(code) > weatherSeverity(worstCode)) {
-        worstCode = code;
+      final c = s.weatherCode;
+      if (c != null && weatherSeverity(c) > weatherSeverity(worstCode)) {
+        worstCode = c;
       }
-    }
-
-    if (matched == 0) {
-      debugPrint('[motorider] WeatherService: no hours matched ride window '
-          '($startUtc..$endUtc)');
-      return null;
     }
 
     return WeatherSummary(
       tempMinC: tempMin,
       tempMaxC: tempMax,
       tempAvgC: tempCount > 0 ? tempSum / tempCount : null,
-      precipitationMm: precSum,
+      precipitationMm: precMax,
       windMaxKmh: windMax,
       weatherCode: worstCode,
     );

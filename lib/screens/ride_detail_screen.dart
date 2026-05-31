@@ -24,6 +24,7 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _notesCtrl;
   bool _loading = true;
+  bool _fetchingWeather = false;
 
   @override
   void initState() {
@@ -59,6 +60,30 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
       const SnackBar(content: Text('Gespeichert')),
     );
     setState(() => _ride = updated);
+  }
+
+  Future<void> _fetchWeather() async {
+    setState(() => _fetchingWeather = true);
+    final ok = await WeatherService.enrichRide(
+      repo: rideRepo,
+      rideId: widget.rideId,
+    );
+    if (!mounted) return;
+    if (ok) {
+      // Reload to surface the new weather card.
+      await _load();
+      if (!mounted) return;
+      setState(() => _fetchingWeather = false);
+    } else {
+      setState(() => _fetchingWeather = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Wetter konnte nicht abgerufen werden (offline oder kein Treffer im Zeitfenster).',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _delete() async {
@@ -133,13 +158,16 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: _StatsGrid(ride: r),
                     ),
-                    if (r.hasWeather) ...[
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: _WeatherCard(ride: r),
-                      ),
-                    ],
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: r.hasWeather
+                          ? _WeatherCard(ride: r)
+                          : _WeatherPlaceholder(
+                              loading: _fetchingWeather,
+                              onFetch: _points.isEmpty ? null : _fetchWeather,
+                            ),
+                    ),
                     const SizedBox(height: 20),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -234,6 +262,55 @@ class _StatsGrid extends StatelessWidget {
     final m = d.inMinutes.remainder(60);
     if (h > 0) return '${h}h ${m}m';
     return '${m}m';
+  }
+}
+
+class _WeatherPlaceholder extends StatelessWidget {
+  const _WeatherPlaceholder({required this.loading, required this.onFetch});
+  final bool loading;
+  final VoidCallback? onFetch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded,
+              color: AppColors.textMuted, size: 22),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Kein Wetter abgerufen',
+              style: TextStyle(
+                color: AppColors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: loading ? null : onFetch,
+            icon: loading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.accent,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded, size: 16),
+            label: Text(loading ? 'Lädt…' : 'Wetter abrufen'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
