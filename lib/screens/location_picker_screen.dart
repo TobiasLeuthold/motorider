@@ -53,6 +53,10 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               initialZoom: hasInitial ? 15 : 8.5,
               minZoom: 3,
               maxZoom: 18,
+              // Pan + zoom only — rotating a pick-a-point map just disorients.
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
               onPositionChanged: (camera, _) {
                 // Track the live centre so "Bestätigen" returns what's under
                 // the pin without reading the controller mid-gesture.
