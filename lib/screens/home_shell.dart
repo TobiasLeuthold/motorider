@@ -4,6 +4,7 @@ import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'fuel_log_screen.dart';
 import 'map_screen.dart';
+import 'rides_screen.dart';
 import 'settings_screen.dart';
 
 class HomeShell extends StatefulWidget {
@@ -27,6 +28,7 @@ class _HomeShellState extends State<HomeShell> {
     final pages = const [
       DashboardScreen(),
       FuelLogScreen(),
+      RidesScreen(),
       MapScreen(),
     ];
     return Scaffold(
@@ -35,23 +37,26 @@ class _HomeShellState extends State<HomeShell> {
           IndexedStack(index: _index, children: pages),
           // Settings affordance sits above each tab's custom header. Padding
           // matches TabHeader's top inset so it lines up with the header text.
-          Positioned(
-            top: 0,
-            right: 0,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 44, right: 8),
-                child: IconButton(
-                  tooltip: 'Einstellungen',
-                  icon: const Icon(
-                    Icons.settings_rounded,
-                    color: AppColors.textMuted,
+          // Hidden on the Karte tab, which has its own top controls. Keyed off
+          // the visible page (not a fixed index) so it survives tab reordering.
+          if (pages[_index] is! MapScreen)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 44, right: 8),
+                  child: IconButton(
+                    tooltip: 'Einstellungen',
+                    icon: const Icon(
+                      Icons.settings_rounded,
+                      color: AppColors.textMuted,
+                    ),
+                    onPressed: _openSettings,
                   ),
-                  onPressed: _openSettings,
                 ),
               ),
             ),
-          ),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -65,6 +70,10 @@ class _HomeShellState extends State<HomeShell> {
           NavigationDestination(
             icon: Icon(Icons.local_gas_station_rounded),
             label: 'Tankbuch',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.route_rounded),
+            label: 'Touren',
           ),
           NavigationDestination(
             icon: Icon(Icons.map_rounded),

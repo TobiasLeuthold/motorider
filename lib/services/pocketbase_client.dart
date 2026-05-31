@@ -66,8 +66,11 @@ class PocketBaseClient {
 
   /// Find a server-side record by its `client_id` (our local UUID).
   /// Returns null if not present on the server.
-  Future<Map<String, dynamic>?> findByClientId(String clientId) async {
-    final uri = Uri.parse('$_base/api/collections/fillups/records').replace(
+  Future<Map<String, dynamic>?> findByClientId(
+    String collection,
+    String clientId,
+  ) async {
+    final uri = Uri.parse('$_base/api/collections/$collection/records').replace(
       queryParameters: {
         'filter': 'client_id="$clientId"',
         'perPage': '1',
@@ -78,19 +81,29 @@ class PocketBaseClient {
     return items.isEmpty ? null : items.first;
   }
 
-  Future<Map<String, dynamic>> createRecord(Map<String, Object?> body) async {
-    final uri = Uri.parse('$_base/api/collections/fillups/records');
+  Future<Map<String, dynamic>> createRecord(
+    String collection,
+    Map<String, Object?> body,
+  ) async {
+    final uri = Uri.parse('$_base/api/collections/$collection/records');
     return await _postOrPatchJson(uri, body, isPatch: false);
   }
 
-  Future<Map<String, dynamic>> updateRecord(String serverId, Map<String, Object?> body) async {
-    final uri = Uri.parse('$_base/api/collections/fillups/records/$serverId');
+  Future<Map<String, dynamic>> updateRecord(
+    String collection,
+    String serverId,
+    Map<String, Object?> body,
+  ) async {
+    final uri = Uri.parse('$_base/api/collections/$collection/records/$serverId');
     return await _postOrPatchJson(uri, body, isPatch: true);
   }
 
   /// Server-side records updated after [since]. `since == null` returns every
   /// record on the server (used on first sync).
-  Future<List<Map<String, dynamic>>> listUpdatedSince(DateTime? since) async {
+  Future<List<Map<String, dynamic>>> listUpdatedSince(
+    String collection,
+    DateTime? since,
+  ) async {
     final all = <Map<String, dynamic>>[];
     var page = 1;
     while (true) {
@@ -102,7 +115,7 @@ class PocketBaseClient {
       if (since != null) {
         params['filter'] = 'updated_at>"${since.toIso8601String()}"';
       }
-      final uri = Uri.parse('$_base/api/collections/fillups/records')
+      final uri = Uri.parse('$_base/api/collections/$collection/records')
           .replace(queryParameters: params);
       final data = await _getJson(uri);
       final items = (data['items'] as List).cast<Map<String, dynamic>>();
