@@ -7,6 +7,7 @@ import '../data/ride_repository.dart';
 import '../models/ride.dart';
 import '../models/ride_point.dart';
 import '../stats/ride_stats.dart';
+import 'weather_service.dart';
 
 /// Live state of [RideTracker]. UI subscribes to [RideTracker.state] for
 /// reactive updates during a ride.
@@ -151,6 +152,16 @@ class RideTracker {
     _positionSub = null;
 
     final ride = _state.currentRide!;
+    // Flush any leftover unbatched points so the persisted ride is complete
+    // before we hand control back to the UI.
+    if (_pointsBuffer.isNotEmpty) {
+      final unBatched = _pointsBuffer.length % 10;
+      if (unBatched > 0) {
+        final tail = _pointsBuffer.sublist(_pointsBuffer.length - unBatched);
+        await _repo.appendPoints(tail);
+      }
+    }
+
     final stats = computeStats(_pointsBuffer);
     final finalized = ride.copyWith(
       endedAt: DateTime.now(),
@@ -163,9 +174,55 @@ class RideTracker {
     );
     await _repo.upsert(finalized);
 
+    // Snapshot the points buffer for weather enrichment before we clear it.
+    final snapshot = List<RidePoint>.from(_pointsBuffer);
     _emit(const TrackerState.idle());
     _pointsBuffer.clear();
+
+    // Fire-and-forget weather enrichment. The first sync push has already
+    // been scheduled by the upsert above (debounced 1.5 s); when weather
+    // arrives we upsert the ride again, which triggers a second push. Cheap
+    // and resilient — if Open-Meteo is unreachable the ride still syncs,
+    // just without weather.
+    // ignore: unawaited_futures
+    _enrichWithWeather(finalized.id, snapshot);
+
     return finalized;
+  }
+
+  Future<void> _enrichWithWeather(String rideId, List<RidePoint> points) async {
+    if (points.isEmpty) return;
+    final first = points.first;
+    final last = points.last;
+    final summary = await WeatherService.fetch(
+      lat: first.lat,
+      lon: first.lon,
+      startUtc: first.ts.toUtc(),
+      endUtc: last.ts.toUtc(),
+    );
+    if (summary == null) {
+      debugPrint('[motorider] WeatherService returned no data for $rideId');
+      return;
+    }
+
+    final current = await _repo.getById(rideId);
+    if (current == null) return;
+    final enriched = current.copyWith(
+      tempMinC: summary.tempMinC,
+      tempMaxC: summary.tempMaxC,
+      tempAvgC: summary.tempAvgC,
+      precipitationMm: summary.precipitationMm,
+      windMaxKmh: summary.windMaxKmh,
+      weatherCode: summary.weatherCode,
+      weatherFetchedAt: DateTime.now(),
+    );
+    await _repo.upsert(enriched);
+    debugPrint(
+      '[motorider] Weather enriched: '
+      'temp ${summary.tempMinC?.toStringAsFixed(0)}–${summary.tempMaxC?.toStringAsFixed(0)}°C, '
+      'precip ${summary.precipitationMm?.toStringAsFixed(1)}mm, '
+      'code ${summary.weatherCode}',
+    );
   }
 
   void _onPosition(Position pos) async {

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../main.dart';
 import '../models/ride.dart';
 import '../models/ride_point.dart';
+import '../services/weather_service.dart';
 import '../theme.dart';
 import '../widgets/ride_polyline_map.dart';
 
@@ -132,6 +133,13 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: _StatsGrid(ride: r),
                     ),
+                    if (r.hasWeather) ...[
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _WeatherCard(ride: r),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -226,6 +234,137 @@ class _StatsGrid extends StatelessWidget {
     final m = d.inMinutes.remainder(60);
     if (h > 0) return '${h}h ${m}m';
     return '${m}m';
+  }
+}
+
+class _WeatherCard extends StatelessWidget {
+  const _WeatherCard({required this.ride});
+  final Ride ride;
+
+  @override
+  Widget build(BuildContext context) {
+    final code = ride.weatherCode ?? 0;
+    final icon = WeatherService.iconForCode(code);
+    final label = WeatherService.labelForCode(code);
+
+    final tempLine = _tempLine(ride);
+    final precip = ride.precipitationMm ?? 0;
+    final wind = ride.windMaxKmh;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: AppColors.accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: AppColors.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (tempLine != null)
+                      Text(
+                        tempLine,
+                        style: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (precip > 0 || wind != null) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (precip > 0)
+                  _Pill(
+                    icon: Icons.water_drop_rounded,
+                    label: '${precip.toStringAsFixed(1)} mm',
+                  ),
+                if (precip > 0 && wind != null) const SizedBox(width: 8),
+                if (wind != null)
+                  _Pill(
+                    icon: Icons.air_rounded,
+                    label: 'bis ${wind.toStringAsFixed(0)} km/h',
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String? _tempLine(Ride r) {
+    final min = r.tempMinC;
+    final max = r.tempMaxC;
+    final avg = r.tempAvgC;
+    if (min == null && max == null && avg == null) return null;
+    if (min != null && max != null && (max - min).abs() >= 1) {
+      return '${min.toStringAsFixed(0)}–${max.toStringAsFixed(0)} °C'
+          '${avg != null ? ' · Ø ${avg.toStringAsFixed(0)} °C' : ''}';
+    }
+    final shown = avg ?? max ?? min!;
+    return '${shown.toStringAsFixed(0)} °C';
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceHi,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.textMuted, size: 14),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

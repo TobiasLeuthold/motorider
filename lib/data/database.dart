@@ -32,10 +32,10 @@ class AppDatabase {
     }
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await _createFillupsV2(db);
-        await _createRidesV3(db);
+        await _createRidesAndPoints(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -62,7 +62,19 @@ class AppDatabase {
           );
         }
         if (oldVersion < 3) {
-          await _createRidesV3(db);
+          await _createRidesAndPoints(db);
+        }
+        if (oldVersion < 4) {
+          // v3 → v4: weather columns on rides. All nullable — old rides
+          // remain "weather-unknown" until the user opens them again and
+          // weather is back-filled.
+          await db.execute('ALTER TABLE rides ADD COLUMN temp_min_c REAL');
+          await db.execute('ALTER TABLE rides ADD COLUMN temp_max_c REAL');
+          await db.execute('ALTER TABLE rides ADD COLUMN temp_avg_c REAL');
+          await db.execute('ALTER TABLE rides ADD COLUMN precipitation_mm REAL');
+          await db.execute('ALTER TABLE rides ADD COLUMN wind_max_kmh REAL');
+          await db.execute('ALTER TABLE rides ADD COLUMN weather_code INTEGER');
+          await db.execute('ALTER TABLE rides ADD COLUMN weather_fetched_at TEXT');
         }
       },
     );
@@ -92,7 +104,7 @@ class AppDatabase {
     await db.execute('CREATE INDEX idx_fillups_sync_state ON fillups(sync_state)');
   }
 
-  Future<void> _createRidesV3(Database db) async {
+  Future<void> _createRidesAndPoints(Database db) async {
     await db.execute('''
       CREATE TABLE rides (
         id TEXT PRIMARY KEY,
@@ -106,6 +118,13 @@ class AppDatabase {
         elevation_gain_m REAL,
         title TEXT,
         notes TEXT,
+        temp_min_c REAL,
+        temp_max_c REAL,
+        temp_avg_c REAL,
+        precipitation_mm REAL,
+        wind_max_kmh REAL,
+        weather_code INTEGER,
+        weather_fetched_at TEXT,
         updated_at TEXT NOT NULL,
         deleted_at TEXT,
         sync_state TEXT NOT NULL DEFAULT 'pending'
