@@ -103,6 +103,55 @@ class FillUp {
     };
   }
 
+  /// Serialize for a `POST` / `PATCH` to PocketBase. The local UUID is sent
+  /// as `client_id`; PocketBase generates its own opaque server-side id.
+  /// Null optional fields are omitted so PocketBase doesn't reject the
+  /// payload (its number-type fields don't accept JSON null).
+  Map<String, Object?> toPocketBaseJson() {
+    return {
+      'client_id': id,
+      'date_iso': date.toIso8601String(),
+      'odometer_km': odometerKm,
+      'liters': liters,
+      'total_chf': totalChf,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (station != null) 'station': station,
+      if (notes != null) 'notes': notes,
+      'full_tank': fullTank,
+      'updated_at': updatedAt.toIso8601String(),
+      if (deletedAt != null) 'deleted_at': deletedAt!.toIso8601String(),
+    };
+  }
+
+  /// Build a FillUp from a PocketBase record JSON. The server's own `id` is
+  /// discarded — we key everything on `client_id` (our UUID) so the same row
+  /// has a stable identity across devices.
+  factory FillUp.fromPocketBaseJson(Map<String, Object?> j) {
+    String? optionalString(Object? v) {
+      if (v == null) return null;
+      final s = v as String;
+      return s.isEmpty ? null : s;
+    }
+
+    final deletedAtRaw = optionalString(j['deleted_at']);
+    return FillUp(
+      id: j['client_id'] as String,
+      date: DateTime.parse(j['date_iso'] as String),
+      odometerKm: (j['odometer_km'] as num).toInt(),
+      liters: (j['liters'] as num).toDouble(),
+      totalChf: (j['total_chf'] as num).toDouble(),
+      latitude: (j['latitude'] as num?)?.toDouble(),
+      longitude: (j['longitude'] as num?)?.toDouble(),
+      station: optionalString(j['station']),
+      notes: optionalString(j['notes']),
+      fullTank: (j['full_tank'] as bool?) ?? true,
+      updatedAt: DateTime.parse(j['updated_at'] as String),
+      deletedAt: deletedAtRaw == null ? null : DateTime.parse(deletedAtRaw),
+      syncState: SyncState.synced,
+    );
+  }
+
   factory FillUp.fromMap(Map<String, Object?> m) {
     final updatedAtRaw = m['updated_at'] as String?;
     final deletedAtRaw = m['deleted_at'] as String?;

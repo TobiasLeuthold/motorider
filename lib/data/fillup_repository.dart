@@ -81,15 +81,15 @@ class FillUpRepository {
 
   /// Inserts rows only if their IDs don't already exist. Used by the CSV seed
   /// so re-imports don't clobber user edits and don't create duplicates.
+  ///
+  /// Unlike [upsert] / [insertMany], this preserves the FillUp's own
+  /// `updatedAt`. The seed sets it to the fill-up's date so any real edit
+  /// (on phone or NAS) always wins the last-write-wins race.
   Future<int> insertManyIgnore(List<FillUp> fillups) async {
     final db = await _database.db;
     final batch = db.batch();
-    final now = DateTime.now();
     for (final f in fillups) {
-      final stamped = f.copyWith(
-        updatedAt: now,
-        syncState: SyncState.pending,
-      );
+      final stamped = f.copyWith(syncState: SyncState.pending);
       batch.insert(
         'fillups',
         stamped.toMap(),

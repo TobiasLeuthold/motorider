@@ -77,6 +77,10 @@ Future<List<FillUp>> parseSeedCsv() async {
       station: s(iStation).isEmpty ? null : s(iStation),
       notes: s(iNotes).isEmpty ? null : s(iNotes),
       fullTank: s(iFull) != '0',
+      // Anchor updated_at to the fill-up's own date so any genuine edit on
+      // either side (phone or NAS) always wins the LWW race. Without this,
+      // a reinstall would re-seed with updated_at = now and clobber edits.
+      updatedAt: date,
     ));
   }
   return fillups;

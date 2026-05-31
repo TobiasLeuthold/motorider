@@ -7,9 +7,17 @@ import 'data/csv_seed.dart';
 import 'data/database.dart';
 import 'data/fillup_repository.dart';
 import 'screens/home_shell.dart';
+import 'services/nas_settings.dart';
+import 'services/sync_service.dart';
 import 'theme.dart';
 
 final FillUpRepository fillUpRepo = FillUpRepository(AppDatabase.instance);
+
+// Initialized in [main] before [runApp]. Accessed from screens like
+// settings_screen.dart. Kept as `late final` globals to match the existing
+// fillUpRepo pattern — fine for a single-user personal app.
+late final NasSettings nasSettings;
+late final SyncService syncService;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +41,17 @@ Future<void> main() async {
 
   await seedFromCsvIfEmpty(fillUpRepo);
   await fillUpRepo.primeStream();
+
+  nasSettings = await NasSettings.load();
+  syncService = SyncService(fillUpRepo, nasSettings);
+
+  // Kick off an opportunistic sync at startup. Not awaited — if the NAS is
+  // unreachable (no Tailscale, plane mode, …) the UI still renders, and the
+  // failure is surfaced in Settings via the sync status stream.
+  if (nasSettings.hasCredentials) {
+    // ignore: unawaited_futures
+    syncService.syncOnce();
+  }
 
   runApp(const MotoRiderApp());
 }
