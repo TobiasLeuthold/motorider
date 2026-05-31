@@ -50,6 +50,35 @@ class ConsumptionPoint {
   final double chfPerLiter;
 }
 
+/// Time granularity for the period breakdown on the overview tab.
+enum PeriodGranularity { week, month, year }
+
+/// Aggregated riding distance and fuel spend for a single calendar period
+/// (one ISO week, one month, or one year).
+class PeriodSummary {
+  const PeriodSummary({
+    required this.start,
+    required this.granularity,
+    required this.km,
+    required this.chf,
+    required this.liters,
+  });
+
+  /// Inclusive start of the period (Monday for weeks, the 1st for months,
+  /// Jan 1st for years). Used as the bucket key and for sorting/labelling.
+  final DateTime start;
+  final PeriodGranularity granularity;
+
+  /// Kilometres ridden whose ending fill-up falls in this period.
+  final int km;
+
+  /// Money spent on fuel in this period (all fill-ups, baseline included).
+  final double chf;
+
+  /// Litres tanked in this period.
+  final double liters;
+}
+
 /// Pure stats calculator over a list of fill-ups sorted by odometer ASC.
 class StatsCalculator {
   static Stats computeStats(List<FillUp> fillups) {
@@ -101,5 +130,78 @@ class StatsCalculator {
       ));
     }
     return out;
+  }
+
+  /// Buckets fill-ups into calendar periods, summing kilometres ridden and
+  /// money/litres spent in each. Returns periods sorted by start ascending.
+  ///
+  /// Kilometres are attributed to the period of the *later* fill-up in each
+  /// consecutive odometer pair (i.e. the distance is booked when it's logged).
+  /// Spend and litres are attributed to the period each fill-up was bought in,
+  /// including the very first ("baseline") fill — it's real money spent.
+  static List<PeriodSummary> periodSummaries(
+    List<FillUp> fillups,
+    PeriodGranularity granularity,
+  ) {
+    if (fillups.isEmpty) return const [];
+
+    final km = <DateTime, int>{};
+    final chf = <DateTime, double>{};
+    final liters = <DateTime, double>{};
+
+    DateTime keyFor(DateTime d) => periodStart(d, granularity);
+
+    // Spend + litres: every fill-up counts toward its own purchase period.
+    for (final f in fillups) {
+      final k = keyFor(f.date);
+      chf[k] = (chf[k] ?? 0) + f.totalChf;
+      liters[k] = (liters[k] ?? 0) + f.liters;
+      km.putIfAbsent(k, () => 0);
+    }
+
+    // Distance: delta between consecutive odometer readings, booked to the
+    // period of the reading that closes the interval.
+    final sorted = [...fillups]..sort((a, b) => a.odometerKm.compareTo(b.odometerKm));
+    for (var i = 1; i < sorted.length; i++) {
+      final delta = sorted[i].odometerKm - sorted[i - 1].odometerKm;
+      if (delta <= 0) continue;
+      final k = keyFor(sorted[i].date);
+      km[k] = (km[k] ?? 0) + delta;
+    }
+
+    final keys = chf.keys.toList()..sort();
+    return [
+      for (final k in keys)
+        PeriodSummary(
+          start: k,
+          granularity: granularity,
+          km: km[k] ?? 0,
+          chf: chf[k] ?? 0,
+          liters: liters[k] ?? 0,
+        ),
+    ];
+  }
+
+  /// Inclusive start of the calendar period that [d] falls into.
+  static DateTime periodStart(DateTime d, PeriodGranularity g) {
+    switch (g) {
+      case PeriodGranularity.week:
+        final monday = d.subtract(Duration(days: d.weekday - 1));
+        return DateTime(monday.year, monday.month, monday.day);
+      case PeriodGranularity.month:
+        return DateTime(d.year, d.month);
+      case PeriodGranularity.year:
+        return DateTime(d.year);
+    }
+  }
+
+  /// ISO-8601 week number (1–53) for [date].
+  static int isoWeek(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    // Thursday of the current week decides which year/week the date belongs to.
+    final thursday = d.add(Duration(days: 4 - d.weekday));
+    final firstThursday = DateTime(thursday.year, 1, 1);
+    final diffDays = thursday.difference(firstThursday).inDays;
+    return 1 + (diffDays ~/ 7);
   }
 }

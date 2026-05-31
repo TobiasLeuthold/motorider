@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../main.dart';
 import '../models/fillup.dart';
 import '../services/location_service.dart';
 import '../theme.dart';
+import 'location_picker_screen.dart';
 
 class AddFillUpScreen extends StatefulWidget {
   const AddFillUpScreen({super.key, this.existing});
@@ -202,6 +205,7 @@ class _AddFillUpScreenState extends State<AddFillUpScreen> {
               lon: _lon,
               locating: _locating,
               onCapture: () => _captureLocation(),
+              onPick: _pickOnMap,
               onClear: () => setState(() {
                 _lat = null;
                 _lon = null;
@@ -301,6 +305,20 @@ class _AddFillUpScreenState extends State<AddFillUpScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(res.error ?? 'Standort nicht verfügbar')),
       );
+    }
+  }
+
+  Future<void> _pickOnMap() async {
+    final initial =
+        (_lat != null && _lon != null) ? LatLng(_lat!, _lon!) : null;
+    final picked = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(builder: (_) => LocationPickerScreen(initial: initial)),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _lat = picked.latitude;
+        _lon = picked.longitude;
+      });
     }
   }
 
@@ -472,70 +490,172 @@ class _LocationTile extends StatelessWidget {
     required this.lon,
     required this.locating,
     required this.onCapture,
+    required this.onPick,
     required this.onClear,
   });
   final double? lat;
   final double? lon;
   final bool locating;
   final VoidCallback onCapture;
+  final VoidCallback onPick;
   final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     final has = lat != null && lon != null;
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border.all(color: AppColors.gridLine),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Icon(
-            has ? Icons.place_rounded : Icons.location_searching_rounded,
-            color: has ? AppColors.accent : AppColors.textMuted,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          if (has) _MapPreview(lat: lat!, lon: lon!, onTap: onPick),
+          Padding(
+            padding: EdgeInsets.fromLTRB(14, has ? 10 : 12, 6, has ? 10 : 12),
+            child: Row(
               children: [
-                Text(
-                  has ? 'Standort erfasst' : 'Kein Standort',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.text,
+                Icon(
+                  has ? Icons.place_rounded : Icons.location_searching_rounded,
+                  color: has ? AppColors.accent : AppColors.textMuted,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        has ? 'Standort erfasst' : 'Kein Standort',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                        ),
+                      ),
+                      Text(
+                        has
+                            ? '${lat!.toStringAsFixed(5)}, ${lon!.toStringAsFixed(5)}'
+                            : 'Automatisch erfasst – tippe zum Anpassen',
+                        style: const TextStyle(
+                            color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
-                Text(
-                  has
-                      ? '${lat!.toStringAsFixed(5)}, ${lon!.toStringAsFixed(5)}'
-                      : 'Aktuellen Standort verwenden',
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                IconButton(
+                  tooltip: 'Auf Karte wählen',
+                  onPressed: onPick,
+                  icon: const Icon(Icons.edit_location_alt_rounded,
+                      color: AppColors.accent),
                 ),
+                IconButton(
+                  tooltip: 'Aktueller Standort',
+                  onPressed: locating ? null : onCapture,
+                  icon: locating
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: AppColors.accent,
+                          ),
+                        )
+                      : const Icon(Icons.my_location_rounded,
+                          color: AppColors.accent),
+                ),
+                if (has)
+                  IconButton(
+                    tooltip: 'Entfernen',
+                    icon: const Icon(Icons.close_rounded,
+                        color: AppColors.textMuted),
+                    onPressed: onClear,
+                  ),
               ],
             ),
           ),
-          if (has)
-            IconButton(
-              tooltip: 'Entfernen',
-              icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
-              onPressed: onClear,
+        ],
+      ),
+    );
+  }
+}
+
+/// Small non-interactive map showing the chosen point. Tapping opens the
+/// full picker. Keyed by coordinates so it recentres when the point changes.
+class _MapPreview extends StatelessWidget {
+  const _MapPreview({required this.lat, required this.lon, required this.onTap});
+  final double lat;
+  final double lon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final point = LatLng(lat, lon);
+    return SizedBox(
+      height: 130,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          FlutterMap(
+            key: ValueKey('preview_${lat}_$lon'),
+            options: MapOptions(
+              initialCenter: point,
+              initialZoom: 14,
+              interactionOptions:
+                  const InteractionOptions(flags: InteractiveFlag.none),
             ),
-          IconButton(
-            tooltip: 'Standort holen',
-            onPressed: locating ? null : onCapture,
-            icon: locating
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: AppColors.accent,
-                    ),
-                  )
-                : const Icon(Icons.my_location_rounded, color: AppColors.accent),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'ch.tleuthold.motorider',
+                maxNativeZoom: 19,
+              ),
+              MarkerLayer(markers: [
+                Marker(
+                  point: point,
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.topCenter,
+                  child: const Icon(Icons.place_rounded,
+                      size: 36, color: AppColors.accent),
+                ),
+              ]),
+            ],
+          ),
+          // Tap layer to open the picker.
+          Positioned.fill(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(onTap: onTap),
+            ),
+          ),
+          // Hint chip.
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: IgnorePointer(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.surface.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.gridLine),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.edit_rounded, size: 13, color: AppColors.accent),
+                    SizedBox(width: 5),
+                    Text('Anpassen',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text)),
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),

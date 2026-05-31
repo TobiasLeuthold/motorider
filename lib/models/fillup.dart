@@ -2,6 +2,13 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
+/// Sync state of a row vs. the NAS backend.
+///
+/// `pending` rows are owed an outbound push; they were either created/edited
+/// locally or arrived back from the server with a later push still queued.
+/// `synced` rows match the server's last-known state.
+enum SyncState { pending, synced }
+
 class FillUp {
   FillUp({
     String? id,
@@ -14,7 +21,11 @@ class FillUp {
     this.station,
     this.notes,
     this.fullTank = true,
-  }) : id = id ?? _uuid.v4();
+    DateTime? updatedAt,
+    this.deletedAt,
+    this.syncState = SyncState.pending,
+  })  : id = id ?? _uuid.v4(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   final String id;
   final DateTime date;
@@ -27,6 +38,18 @@ class FillUp {
   final String? notes;
   final bool fullTank;
 
+  /// Wall-clock time of the last LOCAL write to this row. Drives last-write-
+  /// wins comparisons during sync. The server stores this value verbatim;
+  /// don't bump it for sync-housekeeping writes (e.g. marking synced).
+  final DateTime updatedAt;
+
+  /// Non-null = tombstone. The row stays in the DB so the deletion can sync,
+  /// but [FillUpRepository.getAll] filters it out of normal queries.
+  final DateTime? deletedAt;
+
+  final SyncState syncState;
+
+  bool get isDeleted => deletedAt != null;
   double get pricePerLiter => liters > 0 ? totalChf / liters : 0;
 
   FillUp copyWith({
@@ -39,6 +62,9 @@ class FillUp {
     String? station,
     String? notes,
     bool? fullTank,
+    DateTime? updatedAt,
+    Object? deletedAt = _sentinel,
+    SyncState? syncState,
   }) {
     return FillUp(
       id: id,
@@ -51,6 +77,11 @@ class FillUp {
       station: station ?? this.station,
       notes: notes ?? this.notes,
       fullTank: fullTank ?? this.fullTank,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: identical(deletedAt, _sentinel)
+          ? this.deletedAt
+          : deletedAt as DateTime?,
+      syncState: syncState ?? this.syncState,
     );
   }
 
@@ -66,10 +97,15 @@ class FillUp {
       'station': station,
       'notes': notes,
       'full_tank': fullTank ? 1 : 0,
+      'updated_at': updatedAt.toIso8601String(),
+      'deleted_at': deletedAt?.toIso8601String(),
+      'sync_state': syncState.name,
     };
   }
 
   factory FillUp.fromMap(Map<String, Object?> m) {
+    final updatedAtRaw = m['updated_at'] as String?;
+    final deletedAtRaw = m['deleted_at'] as String?;
     return FillUp(
       id: m['id'] as String,
       date: DateTime.parse(m['date_iso'] as String),
@@ -81,6 +117,22 @@ class FillUp {
       station: m['station'] as String?,
       notes: m['notes'] as String?,
       fullTank: (m['full_tank'] as int? ?? 1) == 1,
+      updatedAt:
+          updatedAtRaw != null && updatedAtRaw.isNotEmpty
+              ? DateTime.parse(updatedAtRaw)
+              : DateTime.parse(m['date_iso'] as String),
+      deletedAt:
+          deletedAtRaw != null && deletedAtRaw.isNotEmpty
+              ? DateTime.parse(deletedAtRaw)
+              : null,
+      syncState: (m['sync_state'] as String?) == 'synced'
+          ? SyncState.synced
+          : SyncState.pending,
     );
   }
 }
+
+// copyWith needs to distinguish "caller didn't pass deletedAt" (keep current)
+// from "caller passed null" (clear the tombstone). A sentinel object is the
+// idiomatic way to do that in Dart without nullable-of-nullable gymnastics.
+const Object _sentinel = Object();

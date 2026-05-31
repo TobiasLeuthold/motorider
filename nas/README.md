@@ -60,10 +60,9 @@ Tailscale.
 
 ## Tailscale endpoint for the app
 
-The Flutter app needs the NAS reachable as something like:
+The NAS lives at:
 
-```
-http://<nas-tailscale-name>:8090
-```
+- `http://dxp4800-tobias.tailc7581b.ts.net:8090` (MagicDNS — preferred)
+- `http://100.97.60.52:8090` (Tailscale IPv4 — fallback)
 
-Confirm it works from your phone (with Tailscale on) by visiting that URL in a browser — you should see the PocketBase landing page.
+Confirm both work from your phone (with Tailscale on) by visiting the URL in a browser — you should see the PocketBase landing page. The Flutter app uses the MagicDNS form as the default base URL.

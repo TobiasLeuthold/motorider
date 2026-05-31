@@ -32,7 +32,7 @@ class AppDatabase {
     }
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE fillups (
@@ -45,7 +45,10 @@ class AppDatabase {
             longitude REAL,
             station TEXT,
             notes TEXT,
-            full_tank INTEGER NOT NULL DEFAULT 1
+            full_tank INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT,
+            sync_state TEXT NOT NULL DEFAULT 'pending'
           )
         ''');
         await db.execute(
@@ -54,6 +57,37 @@ class AppDatabase {
         await db.execute(
           'CREATE INDEX idx_fillups_odo ON fillups(odometer_km)',
         );
+        await db.execute(
+          'CREATE INDEX idx_fillups_updated_at ON fillups(updated_at)',
+        );
+        await db.execute(
+          'CREATE INDEX idx_fillups_sync_state ON fillups(sync_state)',
+        );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // v1 → v2: add sync metadata. updated_at is required for LWW; we
+          // backfill it from date_iso so existing rows have a sensible
+          // ordering relative to anything created post-upgrade.
+          await db.execute(
+            "ALTER TABLE fillups ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+          );
+          await db.execute(
+            'ALTER TABLE fillups ADD COLUMN deleted_at TEXT',
+          );
+          await db.execute(
+            "ALTER TABLE fillups ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'pending'",
+          );
+          await db.execute(
+            "UPDATE fillups SET updated_at = date_iso WHERE updated_at = ''",
+          );
+          await db.execute(
+            'CREATE INDEX idx_fillups_updated_at ON fillups(updated_at)',
+          );
+          await db.execute(
+            'CREATE INDEX idx_fillups_sync_state ON fillups(sync_state)',
+          );
+        }
       },
     );
   }

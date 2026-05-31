@@ -123,7 +123,9 @@ Future<int> reconcileSeedDuplicates(
     );
     for (final f in group) {
       if (f.id != keep.id) {
-        await repo.delete(f.id);
+        // hardDeleteById, not delete: these are legacy local-only dupes,
+        // they must NOT be tombstoned and replicated to the NAS.
+        await repo.hardDeleteById(f.id);
         deleted++;
       }
     }
