@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/fillup.dart' show SyncState;
 import '../models/ride.dart';
 import '../models/ride_point.dart';
+import '../stats/ride_stats.dart';
 import 'database.dart';
 
 /// Persistence layer for [Ride]s + their child `ride_points`.
@@ -115,6 +116,50 @@ class RideRepository {
     );
     await _emit();
     _localWritesController.add(null);
+  }
+
+  /// Recompute the cached stats of every ride from its raw points.
+  ///
+  /// Two self-heal jobs, both idempotent and cheap to run at every startup:
+  ///   • Stats-algorithm changes (e.g. the Doppler-based max-speed fix):
+  ///     rides whose numbers actually changed are rewritten (and re-synced).
+  ///   • Orphaned active rides (app killed mid-tracking, `ended_at` never
+  ///     set): finalized using the last persisted point's timestamp. Called
+  ///     at startup, before any new tracking session, so an active row here
+  ///     is always an orphan.
+  Future<int> recomputeAllStats() async {
+    final rides = await getAll();
+    var changed = 0;
+    for (final r in rides) {
+      final points = await getPoints(r.id);
+      if (points.length < 2) {
+        if (r.endedAt == null) {
+          // Orphan without usable track — close it so it stops looking like
+          // a running ride; stats stay zero.
+          await upsert(r.copyWith(endedAt: r.startedAt));
+          changed++;
+        }
+        continue;
+      }
+      final s = computeStats(points);
+      final differs = r.endedAt == null ||
+          (s.maxSpeedKmh - r.maxSpeedKmh).abs() > 0.5 ||
+          (s.distanceKm - r.distanceKm).abs() > 0.05 ||
+          (s.avgMovingSpeedKmh - r.avgMovingSpeedKmh).abs() > 0.5 ||
+          ((s.elevationGainM ?? -1) - (r.elevationGainM ?? -1)).abs() > 0.5;
+      if (!differs) continue;
+      await upsert(r.copyWith(
+        endedAt: r.endedAt ?? points.last.ts,
+        distanceKm: s.distanceKm,
+        totalDuration: s.totalDuration,
+        movingDuration: s.movingDuration,
+        maxSpeedKmh: s.maxSpeedKmh,
+        avgMovingSpeedKmh: s.avgMovingSpeedKmh,
+        elevationGainM: s.elevationGainM,
+      ));
+      changed++;
+    }
+    return changed;
   }
 
   // ──────────────────────────────────────────────────────────────────────

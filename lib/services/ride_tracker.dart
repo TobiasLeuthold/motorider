@@ -102,6 +102,10 @@ class RideTracker {
   StreamSubscription<Position>? _positionSub;
   final List<RidePoint> _pointsBuffer = [];
   int _nextSequence = 0;
+  // How many buffered points have been confirmed written to SQLite. Batches
+  // flush from this offset, so a failed write is simply retried with the next
+  // batch (insert-or-ignore makes overlaps safe).
+  int _persistedCount = 0;
 
   // Auto-pause heuristic.
   DateTime? _lastMovingTs;
@@ -123,6 +127,7 @@ class RideTracker {
 
     _pointsBuffer.clear();
     _nextSequence = 0;
+    _persistedCount = 0;
     _lastMovingTs = null;
 
     _emit(TrackerState(
@@ -135,12 +140,37 @@ class RideTracker {
       pointsCount: 0,
     ));
 
+    _subscribePositions(forceLocationManager: false);
+  }
+
+  /// Subscribe to the position stream. Tries the fused (Google Play
+  /// services) provider first; if GMS reports its settings check as
+  /// unsatisfiable (no network provider — common on emulators, also seen on
+  /// degoogled devices), falls back to the raw Android LocationManager once
+  /// instead of silently recording nothing.
+  void _subscribePositions({required bool forceLocationManager}) {
     _positionSub = Geolocator.getPositionStream(
-      locationSettings: _locationSettings(),
+      locationSettings:
+          _locationSettings(forceLocationManager: forceLocationManager),
     ).listen(
       _onPosition,
-      onError: (Object e, StackTrace st) {
+      onError: (Object e, StackTrace st) async {
         debugPrint('[motorider] RideTracker position stream error: $e');
+        if (!forceLocationManager &&
+            _state.isTracking &&
+            e is LocationServiceDisabledException) {
+          debugPrint(
+              '[motorider] RideTracker falling back to LocationManager');
+          // Fully tear down the failed stream before re-subscribing — the
+          // plugin has a single event sink, and a late cancel would
+          // otherwise kill the new subscription.
+          await _positionSub?.cancel();
+          _positionSub = null;
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          if (_state.isTracking && _positionSub == null) {
+            _subscribePositions(forceLocationManager: true);
+          }
+        }
       },
     );
   }
@@ -152,14 +182,12 @@ class RideTracker {
     _positionSub = null;
 
     final ride = _state.currentRide!;
-    // Flush any leftover unbatched points so the persisted ride is complete
-    // before we hand control back to the UI.
-    if (_pointsBuffer.isNotEmpty) {
-      final unBatched = _pointsBuffer.length % 10;
-      if (unBatched > 0) {
-        final tail = _pointsBuffer.sublist(_pointsBuffer.length - unBatched);
-        await _repo.appendPoints(tail);
-      }
+    // Flush everything not yet confirmed written (covers both the regular
+    // tail and any batches whose earlier write failed) so the persisted ride
+    // is complete before we hand control back to the UI.
+    if (_pointsBuffer.length > _persistedCount) {
+      await _repo.appendPoints(_pointsBuffer.sublist(_persistedCount));
+      _persistedCount = _pointsBuffer.length;
     }
 
     final stats = computeStats(_pointsBuffer);
@@ -213,13 +241,17 @@ class RideTracker {
     _pointsBuffer.add(point);
     // Persist points in small batches to avoid hammering SQLite at 1Hz.
     // Every 10 points (~10s) is a good compromise between durability and
-    // write cost.
-    if (_pointsBuffer.length % 10 == 0) {
-      final batch = _pointsBuffer.sublist(_pointsBuffer.length - 10);
-      // Fire-and-forget; if it fails the points stay in the buffer and will
-      // be re-attempted next batch (insert-or-ignore semantics).
+    // write cost. _persistedCount only advances after the write succeeds, so
+    // a failed batch is included again in the next flush.
+    if (_pointsBuffer.length - _persistedCount >= 10) {
+      final batch = _pointsBuffer.sublist(_persistedCount);
+      final upTo = _pointsBuffer.length;
       // ignore: unawaited_futures
-      _repo.appendPoints(batch);
+      _repo.appendPoints(batch).then((_) {
+        if (upTo > _persistedCount) _persistedCount = upTo;
+      }).catchError((Object e) {
+        debugPrint('[motorider] RideTracker batch write failed (will retry): $e');
+      });
     }
 
     // Auto-pause heuristic.
@@ -285,10 +317,11 @@ class RideTracker {
     return true;
   }
 
-  LocationSettings _locationSettings() {
+  LocationSettings _locationSettings({bool forceLocationManager = false}) {
     return AndroidSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 0,
+      forceLocationManager: forceLocationManager,
       intervalDuration: const Duration(seconds: 1),
       foregroundNotificationConfig: const ForegroundNotificationConfig(
         notificationTitle: 'Tour läuft',

@@ -5,7 +5,9 @@ import '../main.dart';
 import '../models/ride.dart';
 import '../models/ride_point.dart';
 import '../services/weather_service.dart';
+import '../stats/ride_detail_stats.dart';
 import '../theme.dart';
+import '../widgets/ride_charts.dart';
 import '../widgets/ride_polyline_map.dart';
 
 /// Detail view for a single saved ride: map polyline, stat grid, editable
@@ -21,6 +23,7 @@ class RideDetailScreen extends StatefulWidget {
 class _RideDetailScreenState extends State<RideDetailScreen> {
   Ride? _ride;
   List<RidePoint> _points = const [];
+  RideDetailStats? _detail;
   late final TextEditingController _titleCtrl;
   late final TextEditingController _notesCtrl;
   bool _loading = true;
@@ -37,10 +40,12 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
   Future<void> _load() async {
     final r = await rideRepo.getById(widget.rideId);
     final pts = await rideRepo.getPoints(widget.rideId);
+    final detail = pts.length >= 2 ? computeDetailStats(pts) : null;
     if (!mounted) return;
     setState(() {
       _ride = r;
       _points = pts;
+      _detail = detail;
       _titleCtrl.text = r?.title ?? '';
       _notesCtrl.text = r?.notes ?? '';
       _loading = false;
@@ -118,6 +123,18 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
     super.dispose();
   }
 
+  String _elevationSubtitle(Ride r, RideDetailStats d) {
+    final parts = <String>[];
+    if (d.minAltitudeM != null && d.maxAltitudeM != null) {
+      parts.add('${d.minAltitudeM!.toStringAsFixed(0)}–'
+          '${d.maxAltitudeM!.toStringAsFixed(0)} m ü. M.');
+    }
+    if (r.elevationGainM != null) {
+      parts.add('↑ ${r.elevationGainM!.toStringAsFixed(0)} m');
+    }
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = _ride;
@@ -143,7 +160,7 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
                     SizedBox(
                       height: 280,
                       child: _points.length >= 2
-                          ? RidePolylineMap(points: _points)
+                          ? RidePolylineMap(points: _points, colorBySpeed: true)
                           : Container(
                               color: AppColors.surface,
                               alignment: Alignment.center,
@@ -156,8 +173,44 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: _StatsGrid(ride: r),
+                      child: _StatsGrid(ride: r, detail: _detail),
                     ),
+                    if (_detail != null &&
+                        _detail!.speedSeries.length >= 2) ...[
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _ChartCard(
+                          title: 'Geschwindigkeit',
+                          subtitle: 'km/h über die Fahrzeit · '
+                              'Ø ${r.avgMovingSpeedKmh.toStringAsFixed(0)} km/h gestrichelt',
+                          child: RideSpeedChart(
+                            series: _detail!.speedSeries,
+                            avgKmh: r.avgMovingSpeedKmh,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_detail != null &&
+                        _detail!.elevationSeries.length >= 2) ...[
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _ChartCard(
+                          title: 'Höhenprofil',
+                          subtitle: _elevationSubtitle(r, _detail!),
+                          child:
+                              RideElevationChart(series: _detail!.elevationSeries),
+                        ),
+                      ),
+                    ],
+                    if (_detail != null && _detail!.speedBands.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _DynamicsCard(detail: _detail!),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -202,12 +255,15 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
 }
 
 class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.ride});
+  const _StatsGrid({required this.ride, this.detail});
   final Ride ride;
+  final RideDetailStats? detail;
 
   @override
   Widget build(BuildContext context) {
     final r = ride;
+    final d = detail;
+    final standzeit = r.totalDuration - r.movingDuration;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -252,6 +308,27 @@ class _StatsGrid extends StatelessWidget {
               ),
             ],
           ),
+          if (d != null) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _Stat(
+                  label: 'Schnellster km',
+                  value: d.fastestKmKmh == null
+                      ? '–'
+                      : '${d.fastestKmKmh!.toStringAsFixed(0)} km/h',
+                ),
+                _Stat(
+                  label: 'Stopps',
+                  value: '${d.stopsCount}',
+                ),
+                _Stat(
+                  label: 'Standzeit',
+                  value: standzeit.inSeconds <= 0 ? '–' : _fmt(standzeit),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -261,7 +338,128 @@ class _StatsGrid extends StatelessWidget {
     final h = d.inHours;
     final m = d.inMinutes.remainder(60);
     if (h > 0) return '${h}h ${m}m';
+    if (m == 0) return '${d.inSeconds}s';
     return '${m}m';
+  }
+}
+
+/// Shared shell for the chart cards: title + optional subtitle + content.
+class _ChartCard extends StatelessWidget {
+  const _ChartCard({
+    required this.title,
+    required this.child,
+    this.subtitle,
+  });
+  final String title;
+  final String? subtitle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle!,
+              style: const TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _DynamicsCard extends StatelessWidget {
+  const _DynamicsCard({required this.detail});
+  final RideDetailStats detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final curv = detail.curvinessDegPerKm;
+    return _ChartCard(
+      title: 'Fahrdynamik',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (curv != null) ...[
+            Row(
+              children: [
+                const Icon(Icons.rotate_right_rounded,
+                    color: AppColors.accentSoft, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  'Kurvenfaktor ${curv.toStringAsFixed(0)}°/km',
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceHi,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _curvinessLabel(curv),
+                    style: const TextStyle(
+                      color: AppColors.accentSoft,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
+          const Text(
+            'Tempo-Verteilung (Fahrzeit)',
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SpeedBandBar(bands: detail.speedBands),
+        ],
+      ),
+    );
+  }
+
+  String _curvinessLabel(double degPerKm) {
+    if (degPerKm < 30) return 'Geradeaus';
+    if (degPerKm < 70) return 'Leicht kurvig';
+    if (degPerKm < 130) return 'Kurvig';
+    return 'Sehr kurvig';
   }
 }
 

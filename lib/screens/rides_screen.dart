@@ -164,6 +164,7 @@ class _RideTile extends StatelessWidget {
                     Text(
                       '${ride.distanceKm.toStringAsFixed(1)} km · '
                       '$durFmt · '
+                      'Ø ${ride.avgMovingSpeedKmh.toStringAsFixed(0)} · '
                       'Max ${ride.maxSpeedKmh.toStringAsFixed(0)} km/h',
                       style: const TextStyle(
                         fontSize: 12,
@@ -346,9 +347,9 @@ class _LiveStatsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final speedNow = state.lastPoint?.speedMs == null
-        ? 0.0
-        : state.lastPoint!.speedMs! * 3.6;
+    // lastSpeedKmh blends Doppler and positional speed — raw speedMs is
+    // zero-stuck on emulators and some devices.
+    final speedNow = state.stats.lastSpeedKmh;
     final s = state.stats;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),

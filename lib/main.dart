@@ -47,6 +47,12 @@ Future<void> main() async {
   await fillUpRepo.primeStream();
   await rideRepo.primeStream();
 
+  // Self-heal cached ride stats after stats-algorithm changes (notably the
+  // Doppler-based max-speed fix). Not awaited — rides update in place and the
+  // list re-emits as rows are corrected.
+  // ignore: unawaited_futures
+  rideRepo.recomputeAllStats();
+
   nasSettings = await NasSettings.load();
   syncService = SyncService(fillUpRepo, rideRepo, nasSettings);
   rideTracker = RideTracker(rideRepo);
