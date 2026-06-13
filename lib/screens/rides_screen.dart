@@ -281,6 +281,10 @@ class _ActiveRideViewState extends State<_ActiveRideView> {
                         flex: 4,
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
+                            // Solid fill so the button doesn't show the live
+                            // map through it — a bare OutlinedButton is
+                            // transparent and reads as broken over the map.
+                            backgroundColor: AppColors.surface,
                             foregroundColor: state.isManuallyPaused
                                 ? AppColors.accent
                                 : AppColors.text,
@@ -290,6 +294,9 @@ class _ActiveRideViewState extends State<_ActiveRideView> {
                                   : AppColors.gridLine,
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                           onPressed: state.isManuallyPaused
                               ? rideTracker.resumeRide
@@ -303,7 +310,7 @@ class _ActiveRideViewState extends State<_ActiveRideView> {
                           label: Text(
                             state.isManuallyPaused ? 'Weiter' : 'Pause',
                             style: const TextStyle(
-                              fontSize: 15,
+                              fontSize: 16,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -317,6 +324,9 @@ class _ActiveRideViewState extends State<_ActiveRideView> {
                             backgroundColor: AppColors.danger,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                           onPressed: _stop,
                           icon: const Icon(Icons.stop_rounded, size: 22),
@@ -361,36 +371,25 @@ class _LiveStatsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: state.isPaused
-                      ? AppColors.textMuted.withValues(alpha: 0.25)
-                      : AppColors.accent,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  state.isPaused ? 'PAUSIERT' : 'AUFNAHME',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.6,
-                    color: state.isPaused ? AppColors.textMuted : Colors.black,
-                  ),
-                ),
+          // Left-aligned by the Column's crossAxisAlignment; the Container
+          // hugs its content so the badge never stretches full-width.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: state.isPaused
+                  ? AppColors.textMuted.withValues(alpha: 0.25)
+                  : AppColors.accent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              state.isPaused ? 'PAUSIERT' : 'AUFNAHME',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.6,
+                color: state.isPaused ? AppColors.textMuted : Colors.black,
               ),
-              const Spacer(),
-              Text(
-                '${state.pointsCount} Punkte',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
+            ),
           ),
           const SizedBox(height: 8),
           Row(

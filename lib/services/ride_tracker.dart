@@ -19,7 +19,6 @@ class TrackerState {
     required this.currentRide,
     required this.stats,
     required this.lastPoint,
-    required this.pointsCount,
   });
 
   const TrackerState.idle()
@@ -28,8 +27,7 @@ class TrackerState {
         isManuallyPaused = false,
         currentRide = null,
         stats = RideStats.empty,
-        lastPoint = null,
-        pointsCount = 0;
+        lastPoint = null;
 
   final bool isTracking;
   /// Speed dropped below threshold for long enough that the cosmetic
@@ -42,7 +40,6 @@ class TrackerState {
   final Ride? currentRide;
   final RideStats stats;
   final RidePoint? lastPoint;
-  final int pointsCount;
 
   /// True if either the user or the auto-pause heuristic has us in a paused
   /// state. UI uses this for the "PAUSIERT" badge.
@@ -55,7 +52,6 @@ class TrackerState {
     Object? currentRide = _sentinel,
     RideStats? stats,
     Object? lastPoint = _sentinel,
-    int? pointsCount,
   }) {
     return TrackerState(
       isTracking: isTracking ?? this.isTracking,
@@ -68,7 +64,6 @@ class TrackerState {
       lastPoint: identical(lastPoint, _sentinel)
           ? this.lastPoint
           : lastPoint as RidePoint?,
-      pointsCount: pointsCount ?? this.pointsCount,
     );
   }
 }
@@ -137,7 +132,6 @@ class RideTracker {
       currentRide: ride,
       stats: RideStats.empty,
       lastPoint: null,
-      pointsCount: 0,
     ));
 
     _subscribePositions(forceLocationManager: false);
@@ -272,7 +266,6 @@ class RideTracker {
       isAutoPaused: isAutoPaused,
       stats: stats,
       lastPoint: point,
-      pointsCount: _pointsBuffer.length,
     ));
 
     if (!wasAutoPaused && isAutoPaused) {
