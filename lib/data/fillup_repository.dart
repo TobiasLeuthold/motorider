@@ -186,7 +186,17 @@ class FillUpRepository {
     );
     if (existing.isNotEmpty) {
       final local = FillUp.fromMap(existing.first);
-      if (!serverRow.updatedAt.isAfter(local.updatedAt)) return false;
+      // Last-write-wins: the server wins when strictly newer. On an exact
+      // timestamp tie the server also wins IF the local row is still pending —
+      // i.e. a row the CSV seed just re-created on reinstall, or one whose
+      // server `updated_at` was regressed by the old push bug. A tie where the
+      // local row is already `synced` keeps local (no pointless churn); a
+      // strictly-older server record is always ignored.
+      final serverNewer = serverRow.updatedAt.isAfter(local.updatedAt);
+      final tie = !serverNewer && !local.updatedAt.isAfter(serverRow.updatedAt);
+      if (!serverNewer && !(tie && local.syncState == SyncState.pending)) {
+        return false;
+      }
     }
     final mapped = serverRow.toMap();
     mapped['sync_state'] = 'synced';

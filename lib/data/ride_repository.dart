@@ -211,7 +211,15 @@ class RideRepository {
     );
     if (existing.isNotEmpty) {
       final local = Ride.fromMap(existing.first);
-      if (!server.updatedAt.isAfter(local.updatedAt)) return false;
+      // Last-write-wins, mirroring FillUpRepository.applyServerRecord: server
+      // wins when strictly newer, or on an exact tie when the local row is
+      // still pending (re-created/regressed). A tie with a synced local row is
+      // a no-op; a strictly-older server record is ignored.
+      final serverNewer = server.updatedAt.isAfter(local.updatedAt);
+      final tie = !serverNewer && !local.updatedAt.isAfter(server.updatedAt);
+      if (!serverNewer && !(tie && local.syncState == SyncState.pending)) {
+        return false;
+      }
     }
 
     final mapped = server.toMap();

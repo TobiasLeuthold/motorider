@@ -47,15 +47,24 @@ class SyncResult {
 /// time. No partial-success rollback needed: each row's POST/PATCH is its own
 /// transaction, and `markSynced` only runs after the server acked.
 class SyncService {
-  SyncService(this._fillUpRepo, this._rideRepo, this._settings)
-      : _client = PocketBaseClient(_settings) {
-    _attachAutoTriggers();
+  /// [backend] defaults to a real [PocketBaseClient]; tests inject a fake.
+  /// [autoSync] wires the connectivity + local-write triggers — disabled in
+  /// tests so we don't touch the `connectivity_plus` platform channel and so
+  /// syncs only run when the test explicitly calls [syncOnce].
+  SyncService(
+    this._fillUpRepo,
+    this._rideRepo,
+    this._settings, {
+    SyncBackend? backend,
+    bool autoSync = true,
+  }) : _client = backend ?? PocketBaseClient(_settings) {
+    if (autoSync) _attachAutoTriggers();
   }
 
   final FillUpRepository _fillUpRepo;
   final RideRepository _rideRepo;
   final NasSettings _settings;
-  final PocketBaseClient _client;
+  final SyncBackend _client;
 
   final _controller = StreamController<SyncState>.broadcast();
   SyncState _state = const SyncState.idle();
@@ -115,8 +124,9 @@ class SyncService {
     try {
       final pushedFills = await _pushFillups();
       final pushedRides = await _pushRides();
-      final pulledFills = await _pullFillups();
-      final pulledRides = await _pullRides();
+      final (pulledFills, fillHighWater) = await _pullFillups();
+      final (pulledRides, rideHighWater) = await _pullRides();
+      await _advanceWatermark(fillHighWater, rideHighWater);
       result = SyncResult.ok(
         at: DateTime.now(),
         pushed: pushedFills + pushedRides,
@@ -139,20 +149,41 @@ class SyncService {
     final pending = await _fillUpRepo.getPendingForSync();
     var pushed = 0;
     for (final row in pending) {
-      final body = row.toPocketBaseJson();
       final existing = await _client.findByClientId('fillups', row.id);
       if (existing == null) {
-        await _client.createRecord('fillups', body);
-      } else {
-        await _client.updateRecord('fillups', existing['id'] as String, body);
+        await _client.createRecord('fillups', row.toPocketBaseJson());
+        await _fillUpRepo.markSynced(row.id);
+        pushed++;
+        continue;
       }
+      // Last-write-wins guard: never let a local row overwrite a server copy
+      // that is newer or equal. This is what keeps a reinstall from losing
+      // data: the CSV seed re-creates rows as `pending` with updated_at = the
+      // fill date (older than any real edit), and without this guard the stale
+      // seed row would PATCH the server, regress its updated_at, and the pull's
+      // LWW would then skip the genuine edit — silently dropping e.g. a
+      // location the user added before reinstalling.
+      final serverTs = _serverUpdatedAt(existing);
+      if (serverTs != null && !row.updatedAt.isAfter(serverTs)) {
+        // Server copy is newer or equal — don't clobber it. Leave the row
+        // pending and let the pull reconcile it (adopt the server copy and mark
+        // it synced). This includes the exact-tie case, which is how a row
+        // whose server timestamp was regressed by the old push bug gets its
+        // data back — see FillUpRepository.applyServerRecord.
+        continue;
+      }
+      await _client.updateRecord(
+          'fillups', existing['id'] as String, row.toPocketBaseJson());
       await _fillUpRepo.markSynced(row.id);
       pushed++;
     }
     return pushed;
   }
 
-  Future<int> _pullFillups() async {
+  /// Returns `(rows applied locally, max server updated_at seen)`. The caller
+  /// folds the high-water timestamp into the shared watermark — see
+  /// [_advanceWatermark].
+  Future<(int, DateTime?)> _pullFillups() async {
     final since = _settings.lastPullTs;
     final items = await _client.listUpdatedSince('fillups', since);
     var applied = 0;
@@ -170,11 +201,7 @@ class SyncService {
         highWater = fu.updatedAt;
       }
     }
-    // last_pull_ts is shared across both collections — taking the per-pull
-    // max would deadlock pulls of one collection when the other lags. The
-    // simpler invariant: any successful sync moves the watermark forward to
-    // "now" once both collections are done. So we set it AFTER pull-rides.
-    return applied;
+    return (applied, highWater);
   }
 
   // ── Rides ───────────────────────────────────────────────────────────────
@@ -183,21 +210,33 @@ class SyncService {
     final pending = await _rideRepo.getPendingForSync();
     var pushed = 0;
     for (final row in pending) {
-      final pointsJson = await _rideRepo.serializePointsForSync(row.id);
-      final body = row.toPocketBaseJson(pointsJson: pointsJson);
       final existing = await _client.findByClientId('rides', row.id);
       if (existing == null) {
-        await _client.createRecord('rides', body);
-      } else {
-        await _client.updateRecord('rides', existing['id'] as String, body);
+        final pointsJson = await _rideRepo.serializePointsForSync(row.id);
+        await _client.createRecord(
+            'rides', row.toPocketBaseJson(pointsJson: pointsJson));
+        await _rideRepo.markSynced(row.id);
+        pushed++;
+        continue;
       }
+      // Same last-write-wins guard as _pushFillups — don't clobber a newer (or
+      // equal) server copy with a stale local (e.g. re-seeded) row; leave it
+      // pending for the pull to reconcile.
+      final serverTs = _serverUpdatedAt(existing);
+      if (serverTs != null && !row.updatedAt.isAfter(serverTs)) {
+        continue;
+      }
+      final pointsJson = await _rideRepo.serializePointsForSync(row.id);
+      await _client.updateRecord(
+          'rides', existing['id'] as String, row.toPocketBaseJson(pointsJson: pointsJson));
       await _rideRepo.markSynced(row.id);
       pushed++;
     }
     return pushed;
   }
 
-  Future<int> _pullRides() async {
+  /// Returns `(rows applied locally, max server updated_at seen)`.
+  Future<(int, DateTime?)> _pullRides() async {
     final since = _settings.lastPullTs;
     final items = await _client.listUpdatedSince('rides', since);
     var applied = 0;
@@ -216,14 +255,28 @@ class SyncService {
         highWater = ride.updatedAt;
       }
     }
-    if (highWater != null) {
-      await _settings.setLastPullTs(highWater);
-    } else {
-      // No new server data at all this round. Still bump the watermark so
-      // we don't re-fetch the same "nothing" indefinitely.
-      await _settings.setLastPullTs(DateTime.now());
-    }
-    return applied;
+    return (applied, highWater);
+  }
+
+  /// Parse the server record's app-level `updated_at` (an ISO-8601 string the
+  /// client wrote and the server stores verbatim). Returns null if absent or
+  /// unparseable, in which case the push falls back to writing.
+  static DateTime? _serverUpdatedAt(Map<String, dynamic> record) {
+    final raw = record['updated_at'];
+    return raw is String ? DateTime.tryParse(raw) : null;
+  }
+
+  /// Advance the shared high-water mark to the latest `updated_at` actually
+  /// seen from the server across BOTH collections. Deliberately never bumps to
+  /// `DateTime.now()`: the mark is only ever compared against server-sourced
+  /// timestamps, so using the local clock here would skip records under any
+  /// client/server clock skew. When nothing new was pulled (both null) the
+  /// mark is left untouched — re-querying "since <mark>" next time is cheap and
+  /// returns nothing.
+  Future<void> _advanceWatermark(DateTime? a, DateTime? b) async {
+    DateTime? hw = a;
+    if (b != null && (hw == null || b.isAfter(hw))) hw = b;
+    if (hw != null) await _settings.setLastPullTs(hw);
   }
 
   void _emit(SyncState s) {

@@ -13,13 +13,27 @@ class NasSyncException implements Exception {
   String toString() => message;
 }
 
+/// The narrow surface [SyncService] needs from a sync backend. Real syncs use
+/// [PocketBaseClient]; tests inject an in-memory fake so the push/pull/seed
+/// orchestration can be exercised without a live PocketBase.
+abstract class SyncBackend {
+  Future<Map<String, dynamic>?> findByClientId(String collection, String clientId);
+  Future<Map<String, dynamic>> createRecord(String collection, Map<String, Object?> body);
+  Future<Map<String, dynamic>> updateRecord(
+    String collection,
+    String serverId,
+    Map<String, Object?> body,
+  );
+  Future<List<Map<String, dynamic>>> listUpdatedSince(String collection, DateTime? since);
+}
+
 /// Thin wrapper over PocketBase's REST API scoped to the `fillups` collection.
 ///
 /// Caches the auth token in [NasSettings] and re-logs in transparently when a
 /// request returns 401. All network errors are normalized to
 /// [NasSyncException] so the sync layer doesn't have to know about
 /// `SocketException` / `TimeoutException`.
-class PocketBaseClient {
+class PocketBaseClient implements SyncBackend {
   PocketBaseClient(this._settings);
 
   final NasSettings _settings;
@@ -66,6 +80,7 @@ class PocketBaseClient {
 
   /// Find a server-side record by its `client_id` (our local UUID).
   /// Returns null if not present on the server.
+  @override
   Future<Map<String, dynamic>?> findByClientId(
     String collection,
     String clientId,
@@ -81,6 +96,7 @@ class PocketBaseClient {
     return items.isEmpty ? null : items.first;
   }
 
+  @override
   Future<Map<String, dynamic>> createRecord(
     String collection,
     Map<String, Object?> body,
@@ -89,6 +105,7 @@ class PocketBaseClient {
     return await _postOrPatchJson(uri, body, isPatch: false);
   }
 
+  @override
   Future<Map<String, dynamic>> updateRecord(
     String collection,
     String serverId,
@@ -100,6 +117,7 @@ class PocketBaseClient {
 
   /// Server-side records updated after [since]. `since == null` returns every
   /// record on the server (used on first sync).
+  @override
   Future<List<Map<String, dynamic>>> listUpdatedSince(
     String collection,
     DateTime? since,
