@@ -160,7 +160,11 @@ class _RideDetailScreenState extends State<RideDetailScreen> {
                     SizedBox(
                       height: 280,
                       child: _points.length >= 2
-                          ? RidePolylineMap(points: _points, colorBySpeed: true)
+                          ? RidePolylineMap(
+                              points: _points,
+                              colorBySpeed: true,
+                              enableFullscreen: true,
+                            )
                           : Container(
                               color: AppColors.surface,
                               alignment: Alignment.center,

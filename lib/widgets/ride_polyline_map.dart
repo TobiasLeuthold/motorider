@@ -22,12 +22,17 @@ class RidePolylineMap extends StatefulWidget {
     this.followLast = false,
     this.colorBySpeed = false,
     this.height,
+    this.enableFullscreen = false,
   });
 
   final List<RidePoint> points;
   final bool followLast;
   final bool colorBySpeed;
   final double? height;
+
+  /// When true, an overlay button in the top-right corner opens a full-screen
+  /// version of this map (with a button to shrink it back again).
+  final bool enableFullscreen;
 
   @override
   State<RidePolylineMap> createState() => _RidePolylineMapState();
@@ -180,16 +185,112 @@ class _RidePolylineMapState extends State<RidePolylineMap> {
       ],
     );
 
+    final overlays = <Widget>[
+      if (useSpeedColors)
+        const Positioned(right: 8, bottom: 8, child: _SpeedLegend()),
+      if (widget.enableFullscreen)
+        Positioned(
+          right: 8,
+          top: 8,
+          child: _MapCornerButton(
+            icon: Icons.fullscreen_rounded,
+            tooltip: 'Karte vergrössern',
+            onTap: () => _openFullscreen(context),
+          ),
+        ),
+    ];
+
     return SizedBox(
       height: widget.height,
-      child: useSpeedColors
-          ? Stack(
-              children: [
-                map,
-                const Positioned(right: 8, bottom: 8, child: _SpeedLegend()),
-              ],
-            )
-          : map,
+      child: overlays.isEmpty ? map : Stack(children: [map, ...overlays]),
+    );
+  }
+
+  void _openFullscreen(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _RideMapFullscreenPage(
+          points: widget.points,
+          colorBySpeed: widget.colorBySpeed,
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen take-over for [RidePolylineMap], opened from its maximize
+/// button. The map fills the screen; a matching button (top-right, below the
+/// status bar) shrinks it back.
+class _RideMapFullscreenPage extends StatelessWidget {
+  const _RideMapFullscreenPage({
+    required this.points,
+    required this.colorBySpeed,
+  });
+
+  final List<RidePoint> points;
+  final bool colorBySpeed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: RidePolylineMap(points: points, colorBySpeed: colorBySpeed),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: _MapCornerButton(
+                  icon: Icons.fullscreen_exit_rounded,
+                  tooltip: 'Karte verkleinern',
+                  onTap: () => Navigator.of(context).maybePop(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small rounded surface button used for the map's corner controls.
+class _MapCornerButton extends StatelessWidget {
+  const _MapCornerButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: AppColors.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.gridLine),
+            ),
+            child: Icon(icon, color: AppColors.text, size: 20),
+          ),
+        ),
+      ),
     );
   }
 }
