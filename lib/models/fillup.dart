@@ -135,14 +135,27 @@ class FillUp {
     }
 
     final deletedAtRaw = optionalString(j['deleted_at']);
+
+    // PocketBase number fields default a missing value to 0 (not null), so an
+    // entry saved without a location comes back as (0, 0). Treat that "null
+    // island" sentinel as "no location" — no real fuel stop sits at exactly
+    // 0°,0°, and without this an unlocated entry would gain a phantom pin in
+    // the ocean after a pull.
+    var lat = (j['latitude'] as num?)?.toDouble();
+    var lon = (j['longitude'] as num?)?.toDouble();
+    if (lat == 0 && lon == 0) {
+      lat = null;
+      lon = null;
+    }
+
     return FillUp(
       id: j['client_id'] as String,
       date: DateTime.parse(j['date_iso'] as String),
       odometerKm: (j['odometer_km'] as num).toInt(),
       liters: (j['liters'] as num).toDouble(),
       totalChf: (j['total_chf'] as num).toDouble(),
-      latitude: (j['latitude'] as num?)?.toDouble(),
-      longitude: (j['longitude'] as num?)?.toDouble(),
+      latitude: lat,
+      longitude: lon,
       station: optionalString(j['station']),
       notes: optionalString(j['notes']),
       fullTank: (j['full_tank'] as bool?) ?? true,
