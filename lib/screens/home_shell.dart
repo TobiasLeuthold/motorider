@@ -4,6 +4,7 @@ import '../theme.dart';
 import 'dashboard_screen.dart';
 import 'fuel_log_screen.dart';
 import 'map_screen.dart';
+import 'plan_screen.dart';
 import 'rides_screen.dart';
 import 'settings_screen.dart';
 
@@ -30,6 +31,7 @@ class _HomeShellState extends State<HomeShell> {
       FuelLogScreen(),
       RidesScreen(),
       MapScreen(),
+      PlanScreen(),
     ];
     return Scaffold(
       body: Stack(
@@ -39,7 +41,7 @@ class _HomeShellState extends State<HomeShell> {
           // matches TabHeader's top inset so it lines up with the header text.
           // Hidden on the Karte tab, which has its own top controls. Keyed off
           // the visible page (not a fixed index) so it survives tab reordering.
-          if (pages[_index] is! MapScreen)
+          if (pages[_index] is! MapScreen && pages[_index] is! PlanScreen)
             Positioned(
               top: 0,
               right: 0,
@@ -78,6 +80,10 @@ class _HomeShellState extends State<HomeShell> {
           NavigationDestination(
             icon: Icon(Icons.map_rounded),
             label: 'Karte',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.alt_route_rounded),
+            label: 'Planen',
           ),
         ],
       ),
