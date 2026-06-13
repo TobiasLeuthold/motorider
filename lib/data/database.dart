@@ -32,10 +32,11 @@ class AppDatabase {
     }
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await _createFillupsV2(db);
         await _createRidesAndPoints(db);
+        await _createPlannedRoutes(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -75,6 +76,10 @@ class AppDatabase {
           await db.execute('ALTER TABLE rides ADD COLUMN wind_max_kmh REAL');
           await db.execute('ALTER TABLE rides ADD COLUMN weather_code INTEGER');
           await db.execute('ALTER TABLE rides ADD COLUMN weather_fetched_at TEXT');
+        }
+        if (oldVersion < 5) {
+          // v4 → v5: planned tours (route planner + navigator).
+          await _createPlannedRoutes(db);
         }
       },
     );
@@ -150,6 +155,32 @@ class AppDatabase {
     ''');
     await db.execute(
       'CREATE INDEX idx_ride_points_ride_id ON ride_points(ride_id)',
+    );
+  }
+
+  Future<void> _createPlannedRoutes(Database db) async {
+    await db.execute('''
+      CREATE TABLE planned_routes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        waypoints_json TEXT NOT NULL,
+        geometry_json TEXT NOT NULL,
+        curviness INTEGER NOT NULL DEFAULT 1,
+        distance_m REAL NOT NULL DEFAULT 0,
+        duration_s INTEGER NOT NULL DEFAULT 0,
+        ascent_m REAL,
+        curviness_score REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT,
+        sync_state TEXT NOT NULL DEFAULT 'pending'
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_planned_routes_updated_at ON planned_routes(updated_at)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_planned_routes_sync_state ON planned_routes(sync_state)',
     );
   }
 
