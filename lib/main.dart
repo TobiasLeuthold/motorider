@@ -7,6 +7,7 @@ import 'data/csv_seed.dart';
 import 'data/database.dart';
 import 'data/fillup_repository.dart';
 import 'data/ride_repository.dart';
+import 'data/route_repository.dart';
 import 'screens/home_shell.dart';
 import 'services/nas_settings.dart';
 import 'services/ride_tracker.dart';
@@ -15,6 +16,7 @@ import 'theme.dart';
 
 final FillUpRepository fillUpRepo = FillUpRepository(AppDatabase.instance);
 final RideRepository rideRepo = RideRepository(AppDatabase.instance);
+final RouteRepository routeRepo = RouteRepository(AppDatabase.instance);
 
 // Initialized in [main] before [runApp]. Accessed from screens like
 // settings_screen.dart. Kept as `late final` globals to match the existing
@@ -46,6 +48,7 @@ Future<void> main() async {
   await seedFromCsvIfEmpty(fillUpRepo);
   await fillUpRepo.primeStream();
   await rideRepo.primeStream();
+  await routeRepo.primeStream();
 
   // Self-heal cached ride stats after stats-algorithm changes (notably the
   // Doppler-based max-speed fix). Not awaited — rides update in place and the
