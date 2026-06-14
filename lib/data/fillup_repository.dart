@@ -184,6 +184,7 @@ class FillUpRepository {
       whereArgs: [serverRow.id],
       limit: 1,
     );
+    var incoming = serverRow;
     if (existing.isNotEmpty) {
       final local = FillUp.fromMap(existing.first);
       // Last-write-wins: the server wins when strictly newer. On an exact
@@ -197,8 +198,22 @@ class FillUpRepository {
       if (!serverNewer && !(tie && local.syncState == SyncState.pending)) {
         return false;
       }
+      // Never let a sync regress a location we already have. Locations are only
+      // ever ADDED in this app (never deliberately cleared), so a server row
+      // that arrives without one is treated as "no change to location", not
+      // "clear it" — this is what previously wiped a fuel stop's coordinates on
+      // reinstall. The rest of the (newer) server row still wins as usual.
+      if (incoming.latitude == null &&
+          incoming.longitude == null &&
+          local.latitude != null &&
+          local.longitude != null) {
+        incoming = incoming.copyWith(
+          latitude: local.latitude,
+          longitude: local.longitude,
+        );
+      }
     }
-    final mapped = serverRow.toMap();
+    final mapped = incoming.toMap();
     mapped['sync_state'] = 'synced';
     await db.insert(
       'fillups',
