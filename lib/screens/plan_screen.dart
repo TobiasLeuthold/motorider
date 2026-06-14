@@ -10,6 +10,7 @@ import '../main.dart';
 import '../models/curviness.dart';
 import '../models/planned_route.dart';
 import '../services/geo.dart';
+import '../services/geocoding_service.dart';
 import '../services/location_service.dart';
 import '../services/routing_service.dart';
 import '../services/tile_cache.dart';
@@ -34,6 +35,7 @@ class PlanScreen extends StatefulWidget {
 class _PlanScreenState extends State<PlanScreen> {
   final _controller = MapController();
   final _router = RoutingService();
+  final _geocoder = GeocodingService();
 
   static const _swissCenter = LatLng(46.8182, 8.2275);
 
@@ -64,6 +66,15 @@ class _PlanScreenState extends State<PlanScreen> {
 
   Timer? _rerouteTimer;
 
+  // Place search (Photon autocomplete). Picking a result drops a waypoint,
+  // same as tapping the map.
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
+  List<GeoPlace> _searchResults = const [];
+  bool _searching = false;
+  Timer? _searchDebounce;
+  int _searchReqId = 0;
+
   TileCache? _tileCache;
   CachedTileProvider? _tileProvider;
 
@@ -71,6 +82,7 @@ class _PlanScreenState extends State<PlanScreen> {
   void initState() {
     super.initState();
     _initTileCache();
+    _seedStartFromLocation();
   }
 
   Future<void> _initTileCache() async {
@@ -90,7 +102,11 @@ class _PlanScreenState extends State<PlanScreen> {
   @override
   void dispose() {
     _rerouteTimer?.cancel();
+    _searchDebounce?.cancel();
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
     _router.dispose();
+    _geocoder.dispose();
     _tileProvider?.dispose();
     super.dispose();
   }
@@ -291,6 +307,78 @@ class _PlanScreenState extends State<PlanScreen> {
     _scheduleReroute(immediate: true);
   }
 
+  // ──────────────────────────── Search ───────────────────────────────────
+
+  void _onSearchChanged(String value) {
+    debugPrint('[motorider] search onChanged: "$value"');
+    _searchDebounce?.cancel();
+    final q = value.trim();
+    if (q.length < GeocodingService.minQueryLength) {
+      setState(() {
+        _searchResults = const [];
+        _searching = false;
+      });
+      return;
+    }
+    setState(() => _searching = true);
+    _searchDebounce =
+        Timer(const Duration(milliseconds: 320), () => _runSearch(q));
+  }
+
+  Future<void> _runSearch(String query) async {
+    final req = ++_searchReqId;
+    LatLng? bias;
+    try {
+      bias = _controller.camera.center;
+    } catch (_) {
+      bias = null; // map not laid out yet
+    }
+    try {
+      final results = await _geocoder.search(query, bias: bias);
+      debugPrint('[motorider] search results for "$query": ${results.length}');
+      if (!mounted || req != _searchReqId) return;
+      setState(() {
+        _searchResults = results;
+        _searching = false;
+      });
+    } on GeocodingException catch (e) {
+      debugPrint('[motorider] search FAILED for "$query": ${e.message}');
+      if (!mounted || req != _searchReqId) return;
+      setState(() {
+        _searchResults = const [];
+        _searching = false;
+      });
+    }
+  }
+
+  void _pickSearchResult(GeoPlace place) {
+    FocusScope.of(context).unfocus();
+    _searchDebounce?.cancel();
+    _searchReqId++; // drop any in-flight response
+    setState(() {
+      _searchCtrl.clear();
+      _searchResults = const [];
+      _searching = false;
+    });
+    _addWaypoint(place.position); // adds + selects + schedules a reroute
+    if (_waypoints.length >= 2) {
+      _fit(_waypoints);
+    } else {
+      _controller.move(place.position, 13);
+    }
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    _searchReqId++;
+    setState(() {
+      _searchCtrl.clear();
+      _searchResults = const [];
+      _searching = false;
+    });
+    FocusScope.of(context).unfocus();
+  }
+
   // ──────────────────────────── Camera ───────────────────────────────────
 
   void _fit(List<LatLng> pts) {
@@ -310,6 +398,35 @@ class _PlanScreenState extends State<PlanScreen> {
   void _zoom(double d) {
     final cam = _controller.camera;
     _controller.move(cam.center, (cam.zoom + d).clamp(3.0, 18.0));
+  }
+
+  /// On open, drop the rider's current location as the start waypoint so a tour
+  /// defaults to "from here". Silent if location is unavailable (no permission /
+  /// no fix) — the manual tap-to-set-start flow still works. Skips seeding if a
+  /// waypoint was already placed (e.g. the rider tapped before the fix arrived).
+  Future<void> _seedStartFromLocation() async {
+    setState(() => _locating = true);
+    final res = await LocationService.getCurrent();
+    if (!mounted) return;
+    var seeded = false;
+    setState(() {
+      _locating = false;
+      if (res.position != null) {
+        final p = LatLng(res.position!.latitude, res.position!.longitude);
+        _userPos = p;
+        if (_waypoints.isEmpty) {
+          _waypoints.add(p);
+          seeded = true;
+        }
+      }
+    });
+    if (seeded) {
+      try {
+        _controller.move(_userPos!, 12);
+      } catch (_) {
+        // Map not laid out yet — initialCenter holds until the rider pans.
+      }
+    }
   }
 
   Future<void> _locateMe() async {
@@ -557,7 +674,12 @@ class _PlanScreenState extends State<PlanScreen> {
               initialZoom: 8,
               minZoom: 3,
               maxZoom: 18,
-              onTap: (_, p) => _addWaypoint(p),
+              onTap: (_, p) {
+                if (_searchResults.isNotEmpty || _searchCtrl.text.isNotEmpty) {
+                  _clearSearch();
+                }
+                _addWaypoint(p);
+              },
               onLongPress: (_, p) => _insertVia(p),
               // While dragging a waypoint, map panning is off so the gesture
               // can't be hijacked into a map pan.
@@ -605,7 +727,7 @@ class _PlanScreenState extends State<PlanScreen> {
           ),
           ),
 
-          // Top bar.
+          // Top bar + place search.
           Positioned(
             top: 0,
             left: 0,
@@ -613,11 +735,26 @@ class _PlanScreenState extends State<PlanScreen> {
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: _TopBar(
-                  routing: _routing,
-                  onSaved: _openSavedRoutes,
-                  onClear: _waypoints.isEmpty ? null : _clearAll,
-                  onReverse: _waypoints.length >= 2 ? _reverse : null,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _TopBar(
+                      routing: _routing,
+                      onSaved: _openSavedRoutes,
+                      onClear: _waypoints.isEmpty ? null : _clearAll,
+                      onReverse: _waypoints.length >= 2 ? _reverse : null,
+                    ),
+                    const SizedBox(height: 8),
+                    _SearchBar(
+                      controller: _searchCtrl,
+                      focusNode: _searchFocus,
+                      searching: _searching,
+                      hasText: _searchCtrl.text.isNotEmpty,
+                      onChanged: _onSearchChanged,
+                      onClear: _clearSearch,
+                    ),
+                    if (_searchResults.isNotEmpty) _buildSearchResults(),
+                  ],
                 ),
               ),
             ),
@@ -718,6 +855,53 @@ class _PlanScreenState extends State<PlanScreen> {
     }
     return markers;
   }
+
+  Widget _buildSearchResults() {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      constraints: const BoxConstraints(maxHeight: 280),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.98),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: _searchResults.length,
+          separatorBuilder: (_, _) =>
+              const Divider(height: 1, color: AppColors.gridLine),
+          itemBuilder: (context, i) {
+            final r = _searchResults[i];
+            return ListTile(
+              dense: true,
+              leading: const Icon(Icons.place_rounded,
+                  color: AppColors.accent, size: 20),
+              title: Text(
+                r.primary,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: AppColors.text, fontWeight: FontWeight.w700),
+              ),
+              subtitle: (r.secondary == null || r.secondary!.isEmpty)
+                  ? null
+                  : Text(
+                      r.secondary!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: AppColors.textMuted, fontSize: 12),
+                    ),
+              onTap: () => _pickSearchResult(r),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 Color _curvinessColor(Curviness c) => switch (c) {
@@ -728,6 +912,78 @@ Color _curvinessColor(Curviness c) => switch (c) {
     };
 
 // ─────────────────────────────── Widgets ─────────────────────────────────
+
+/// Place-search field (Photon autocomplete). Results are rendered separately
+/// by the screen so taps land in its state.
+class _SearchBar extends StatelessWidget {
+  const _SearchBar({
+    required this.controller,
+    required this.focusNode,
+    required this.searching,
+    required this.hasText,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool searching;
+  final bool hasText;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 12),
+          const Icon(Icons.search_rounded, size: 20, color: AppColors.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              onChanged: onChanged,
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(
+                  color: AppColors.text, fontWeight: FontWeight.w600),
+              decoration: const InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: 'Ort suchen — Start oder Ziel',
+                hintStyle: TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+          ),
+          if (searching)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 14),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.accent),
+              ),
+            )
+          else if (hasText)
+            IconButton(
+              tooltip: 'Leeren',
+              onPressed: onClear,
+              icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+            )
+          else
+            const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+}
 
 class _TopBar extends StatelessWidget {
   const _TopBar({
