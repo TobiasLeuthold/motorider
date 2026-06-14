@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/curviness.dart';
 import '../services/geo.dart';
+import '../services/maneuvers.dart';
 import '../services/route_navigator.dart';
 import '../services/routing_service.dart';
 import '../services/tile_cache.dart';
@@ -24,6 +25,7 @@ class NavigationScreen extends StatefulWidget {
     required this.waypoints,
     required this.tileCache,
     this.curviness = Curviness.balanced,
+    this.maneuvers = const [],
   });
 
   final List<LatLng> geometry;
@@ -31,6 +33,7 @@ class NavigationScreen extends StatefulWidget {
   final List<LatLng> waypoints;
   final TileCache tileCache;
   final Curviness curviness;
+  final List<Maneuver> maneuvers;
 
   @override
   State<NavigationScreen> createState() => _NavigationScreenState();
@@ -60,6 +63,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
   String? _gpsError;
   static const _navZoom = 15.5;
 
+  // Current (smoothed) follow-zoom — eased toward the speed-adaptive target so
+  // it never jumps.
+  double _zoom = _navZoom;
+
   @override
   void initState() {
     super.initState();
@@ -72,7 +79,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       // Mutable on purpose: TileLayer injects a User-Agent into this map.
       headers: {'User-Agent': kUserAgent},
     );
-    _nav = _buildNavigator(_geometry, widget.durationS);
+    _nav = _buildNavigator(_geometry, widget.durationS, widget.maneuvers);
     _subscribeNav();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.move(_geometry.first, _navZoom);
@@ -80,8 +87,16 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _startGps();
   }
 
-  RouteNavigator _buildNavigator(List<LatLng> geom, int durationS) =>
-      RouteNavigator(geometry: geom, totalDurationS: durationS);
+  RouteNavigator _buildNavigator(
+    List<LatLng> geom,
+    int durationS,
+    List<Maneuver> maneuvers,
+  ) =>
+      RouteNavigator(
+        geometry: geom,
+        totalDurationS: durationS,
+        maneuvers: maneuvers,
+      );
 
   void _subscribeNav() {
     _navSub = _nav.changes.listen(_onNavState);
@@ -98,7 +113,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
     setState(() => _state = s);
     if (_follow && s.snapped != null) {
-      _controller.move(s.snapped!, _controller.camera.zoom);
+      // Ease the zoom toward the speed-adaptive target so it changes smoothly
+      // rather than snapping between levels.
+      final target = navZoomForSpeed(s.speedKmh ?? 0);
+      _zoom += (target - _zoom) * 0.2;
+      _controller.move(s.snapped!, _zoom);
     }
   }
 
@@ -179,7 +198,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _sim = null;
 
     setState(() => _geometry = r.geometry);
-    _nav = _buildNavigator(r.geometry, r.durationS);
+    _nav = _buildNavigator(r.geometry, r.durationS, r.maneuvers);
     _subscribeNav();
 
     if (wasSimulating) {
@@ -195,7 +214,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   void _recenter() {
     setState(() => _follow = true);
     final p = _state.snapped ?? _geometry.first;
-    _controller.move(p, _navZoom);
+    _zoom = navZoomForSpeed(_state.speedKmh ?? 0);
+    _controller.move(p, _zoom);
   }
 
   @override
@@ -271,7 +291,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ],
           ),
 
-          // Top stats card.
+          // Top: next-turn banner (Google-Maps style) + compact stats card.
           Positioned(
             top: 0,
             left: 0,
@@ -279,12 +299,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: _NavTopCard(
-                  remainingKm: s.remainingKm,
-                  remainingSeconds: s.remainingSeconds,
-                  eta: eta,
-                  speedKmh: s.speedKmh,
-                  onClose: () => Navigator.of(context).maybePop(),
+                child: Column(
+                  children: [
+                    if (s.nextManeuver != null && !s.offRoute && !s.arrived) ...[
+                      _ManeuverBanner(
+                        maneuver: s.nextManeuver!,
+                        meters: s.nextManeuverMeters,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    _NavTopCard(
+                      remainingKm: s.remainingKm,
+                      remainingSeconds: s.remainingSeconds,
+                      eta: eta,
+                      speedKmh: s.speedKmh,
+                      onClose: () => Navigator.of(context).maybePop(),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -526,39 +557,65 @@ class _NavBottomBar extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
+              // Simulation is a testing aid — kept as a small, unobtrusive
+              // icon rather than a prominent button you'd hit while riding.
+              _SimToggleMini(simulating: simulating, onTap: onSimulate),
+              const SizedBox(width: 12),
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onSimulate,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                        simulating ? AppColors.accent : AppColors.textMuted,
-                    side: BorderSide(
-                        color: simulating
-                            ? AppColors.accent
-                            : AppColors.gridLine),
+                child: FilledButton.icon(
+                  onPressed: onExit,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.surfaceHi,
+                    foregroundColor: AppColors.text,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  icon: Icon(simulating
-                      ? Icons.stop_circle_outlined
-                      : Icons.play_circle_outline_rounded),
-                  label: Text(simulating ? 'Simulation stoppen' : 'Simulieren'),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Navigation beenden'),
                 ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: onExit,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.surfaceHi,
-                  foregroundColor: AppColors.text,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                ),
-                icon: const Icon(Icons.close_rounded, size: 18),
-                label: const Text('Ende'),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small, low-key toggle for the GPS simulator. It's a developer/testing aid,
+/// so it reads as a tiny icon (bug glyph) instead of a big button.
+class _SimToggleMini extends StatelessWidget {
+  const _SimToggleMini({required this.simulating, required this.onTap});
+  final bool simulating;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = simulating ? AppColors.accent : AppColors.textMuted;
+    return Tooltip(
+      message: simulating ? 'Simulation stoppen' : 'Fahrt simulieren (Test)',
+      child: Material(
+        color: simulating
+            ? AppColors.accent.withValues(alpha: 0.15)
+            : AppColors.surfaceHi,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: simulating ? AppColors.accent : AppColors.gridLine),
+            ),
+            child: Icon(
+              simulating ? Icons.stop_rounded : Icons.bug_report_rounded,
+              color: color,
+              size: 20,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -691,4 +748,103 @@ class _DestFlag extends StatelessWidget {
       child: const Icon(Icons.flag_rounded, color: AppColors.accent, size: 18),
     );
   }
+}
+
+/// Google-Maps-style next-turn banner: a big direction arrow, the distance to
+/// the turn, and the instruction.
+class _ManeuverBanner extends StatelessWidget {
+  const _ManeuverBanner({required this.maneuver, required this.meters});
+  final Maneuver maneuver;
+  final double meters;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: AppColors.accent,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(_maneuverIcon(maneuver), color: Colors.black, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _fmtDist(meters),
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                Text(
+                  maneuver.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _maneuverIcon(Maneuver m) {
+  switch (m.command) {
+    case 2:
+      return Icons.turn_left;
+    case 3:
+      return Icons.turn_slight_left;
+    case 4:
+      return Icons.turn_sharp_left;
+    case 5:
+      return Icons.turn_right;
+    case 6:
+      return Icons.turn_slight_right;
+    case 7:
+      return Icons.turn_sharp_right;
+    case 8:
+      return Icons.turn_slight_left;
+    case 9:
+      return Icons.turn_slight_right;
+    case 10:
+      return Icons.u_turn_left;
+    case 11:
+      return Icons.u_turn_right;
+    case 13:
+    case 14:
+      return Icons.roundabout_right;
+    default:
+      return Icons.straight;
+  }
+}
+
+/// Round the distance-to-turn to a readable value ("Jetzt", "120 m", "1.3 km").
+String _fmtDist(double m) {
+  if (m < 30) return 'Jetzt';
+  if (m < 1000) {
+    final r = m < 100 ? (m / 10).round() * 10 : (m / 50).round() * 50;
+    return '$r m';
+  }
+  return '${(m / 1000).toStringAsFixed(1)} km';
 }

@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/curviness.dart';
 import 'geo.dart';
+import 'maneuvers.dart';
 
 /// A routed line plus its summary stats, as returned by [RoutingService].
 class RouteResult {
@@ -15,6 +16,7 @@ class RouteResult {
     required this.ascentM,
     required this.curviness,
     required this.profile,
+    this.maneuvers = const [],
   });
 
   final List<LatLng> geometry;
@@ -27,6 +29,9 @@ class RouteResult {
 
   /// BRouter profile that produced this line.
   final String profile;
+
+  /// Turn-by-turn maneuvers (from BRouter voice hints) for navigation.
+  final List<Maneuver> maneuvers;
 
   double get distanceKm => distanceM / 1000.0;
   Duration get duration => Duration(seconds: durationS);
@@ -98,7 +103,7 @@ class RoutingService {
   ) async {
     final uri = Uri.parse(
       '$baseUrl?lonlats=$lonlats&profile=$profile'
-      '&alternativeidx=$altIdx&format=geojson',
+      '&alternativeidx=$altIdx&format=geojson&timode=2', // timode=2 → voicehints
     );
     http.Response res;
     try {
@@ -177,6 +182,7 @@ class RoutingService {
           : parseNum(props['filtered ascend']),
       curviness: curvinessScore(pts),
       profile: profile,
+      maneuvers: parseVoicehints(props['voicehints']),
     );
   }
 

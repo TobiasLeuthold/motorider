@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'geo.dart';
+import 'maneuvers.dart';
 
 /// A single position update feeding navigation. Comes either from the GPS
 /// ([NavGps]) or, for testing on an emulator, from [RouteSimulator].
@@ -32,6 +33,8 @@ class NavState {
     this.offRouteMeters = 0,
     this.offRoute = false,
     this.arrived = false,
+    this.nextManeuver,
+    this.nextManeuverMeters = 0,
   });
 
   const NavState.initial() : this();
@@ -52,6 +55,12 @@ class NavState {
   final bool offRoute;
   final bool arrived;
 
+  /// The next turn ahead (null near the end or when there are no maneuvers).
+  final Maneuver? nextManeuver;
+
+  /// Distance along the route to [nextManeuver], in meters.
+  final double nextManeuverMeters;
+
   double get remainingKm => remainingMeters / 1000.0;
 }
 
@@ -63,18 +72,28 @@ class RouteNavigator {
   RouteNavigator({
     required this.geometry,
     required this.totalDurationS,
+    this.maneuvers = const [],
     this.offRouteThresholdM = 45,
     this.offRouteStreakNeeded = 3,
     this.arriveRadiusM = 35,
-  }) : _cum = cumulativeMeters(geometry);
+  }) : _cum = cumulativeMeters(geometry) {
+    for (final m in maneuvers) {
+      if (m.isTurn && m.geometryIndex >= 0 && m.geometryIndex < _cum.length) {
+        _turns.add(_TurnAt(m, _cum[m.geometryIndex]));
+      }
+    }
+    _turns.sort((a, b) => a.along.compareTo(b.along));
+  }
 
   final List<LatLng> geometry;
   final int totalDurationS;
+  final List<Maneuver> maneuvers;
   final double offRouteThresholdM;
   final int offRouteStreakNeeded;
   final double arriveRadiusM;
 
   final List<double> _cum;
+  final List<_TurnAt> _turns = [];
   int _offStreak = 0;
 
   final _controller = StreamController<NavState>.broadcast();
@@ -101,6 +120,18 @@ class RouteNavigator {
     final arrived = remaining <= arriveRadiusM &&
         snap.crossTrackMeters <= offRouteThresholdM;
 
+    // Next turn ahead: first maneuver more than 8 m past the current position
+    // (so we don't keep announcing one we're already on top of).
+    Maneuver? nextManeuver;
+    double nextManeuverMeters = 0;
+    for (final t in _turns) {
+      if (t.along > along + 8) {
+        nextManeuver = t.m;
+        nextManeuverMeters = t.along - along;
+        break;
+      }
+    }
+
     _emit(NavState(
       raw: fix.position,
       snapped: snap.point,
@@ -112,6 +143,8 @@ class RouteNavigator {
       offRouteMeters: snap.crossTrackMeters,
       offRoute: offRoute,
       arrived: arrived,
+      nextManeuver: nextManeuver,
+      nextManeuverMeters: nextManeuverMeters,
     ));
   }
 
@@ -123,6 +156,13 @@ class RouteNavigator {
   Future<void> dispose() async {
     await _controller.close();
   }
+}
+
+/// A maneuver with its precomputed distance from the route start.
+class _TurnAt {
+  const _TurnAt(this.m, this.along);
+  final Maneuver m;
+  final double along;
 }
 
 /// Live GPS as a [NavFix] stream. Thin wrapper over Geolocator with the same

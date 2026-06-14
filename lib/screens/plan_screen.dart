@@ -576,6 +576,7 @@ class _PlanScreenState extends State<PlanScreen> {
         waypoints: List.of(_waypoints),
         tileCache: _tileCache!,
         curviness: _curviness,
+        maneuvers: route.maneuvers,
       ),
     ));
   }
