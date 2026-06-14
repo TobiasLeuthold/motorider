@@ -87,5 +87,13 @@ void main() {
       nav.update(NavFix(position: geom[0]));
       expect(nav.state.nextManeuver, isNull);
     });
+
+    test('course follows the route bearing on-route (heading-up)', () {
+      // geom heads due east (lon increasing) → bearing ~90°.
+      final nav = RouteNavigator(geometry: geom, totalDurationS: 600);
+      nav.update(NavFix(position: geom[2]));
+      expect(nav.state.courseDeg, isNotNull);
+      expect(nav.state.courseDeg!, closeTo(90, 5));
+    });
   });
 }

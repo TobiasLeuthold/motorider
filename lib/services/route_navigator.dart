@@ -35,6 +35,7 @@ class NavState {
     this.arrived = false,
     this.nextManeuver,
     this.nextManeuverMeters = 0,
+    this.courseDeg,
   });
 
   const NavState.initial() : this();
@@ -60,6 +61,11 @@ class NavState {
 
   /// Distance along the route to [nextManeuver], in meters.
   final double nextManeuverMeters;
+
+  /// Direction of travel in degrees (0 = north, clockwise). Drives the
+  /// heading-up map rotation. On-route this is the bearing of the route at the
+  /// snapped position (smooth); off-route it's the rider's GPS course.
+  final double? courseDeg;
 
   double get remainingKm => remainingMeters / 1000.0;
 }
@@ -95,6 +101,8 @@ class RouteNavigator {
   final List<double> _cum;
   final List<_TurnAt> _turns = [];
   int _offStreak = 0;
+  LatLng? _lastRaw;
+  double? _lastCourse;
 
   final _controller = StreamController<NavState>.broadcast();
   NavState _state = const NavState.initial();
@@ -132,6 +140,21 @@ class RouteNavigator {
       }
     }
 
+    // Direction of travel for the heading-up map. On the route, the bearing of
+    // the current segment is smooth and reliable; off the route, the rider's
+    // actual GPS course (or the bearing they're moving along) is what matters.
+    final routeCourse = snap.segmentIndex + 1 < geometry.length
+        ? bearingDeg(geometry[snap.segmentIndex], geometry[snap.segmentIndex + 1])
+        : null;
+    double? course;
+    if (offRoute) {
+      course = fix.headingDeg ?? _bearingFromLastRaw(fix.position) ?? _lastCourse;
+    } else {
+      course = routeCourse ?? fix.headingDeg ?? _lastCourse;
+    }
+    if (course != null) _lastCourse = course;
+    _lastRaw = fix.position;
+
     _emit(NavState(
       raw: fix.position,
       snapped: snap.point,
@@ -145,7 +168,16 @@ class RouteNavigator {
       arrived: arrived,
       nextManeuver: nextManeuver,
       nextManeuverMeters: nextManeuverMeters,
+      courseDeg: course,
     ));
+  }
+
+  /// Bearing from the previous raw fix to [p], or null if we haven't moved far
+  /// enough for it to be meaningful.
+  double? _bearingFromLastRaw(LatLng p) {
+    final last = _lastRaw;
+    if (last == null || haversineMeters(last, p) < 4) return null;
+    return bearingDeg(last, p);
   }
 
   void _emit(NavState s) {

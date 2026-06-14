@@ -76,6 +76,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
   // it never jumps.
   double _zoom = _navZoom;
 
+  // Current (smoothed) map rotation in degrees. The map is turned so the
+  // direction of travel points up (Google-Maps style); 0 = north up.
+  double _mapRotation = 0;
+
+  // Off-route: the BRouter path from where the rider actually is back onto the
+  // planned route (to the nearest point on it). Null while on-route.
+  List<LatLng>? _backToRoute;
+  bool _backComputing = false;
+  DateTime? _lastBackAt;
+  LatLng? _lastBackFrom;
+
   @override
   void initState() {
     super.initState();
@@ -127,17 +138,68 @@ class _NavigationScreenState extends State<NavigationScreen> {
       }
     }
     setState(() => _state = s);
-    if (_follow && s.snapped != null) {
-      // Ease the zoom toward the speed-adaptive target so it changes smoothly
-      // rather than snapping between levels.
-      final target = navZoomForSpeed(s.speedKmh ?? 0);
-      _zoom += (target - _zoom) * 0.2;
-      _controller.move(s.snapped!, _zoom);
+    // Where to centre: the real position when off-route (so the rider sees they
+    // left the line), the snapped point when on it (smooth).
+    final displayPos = (s.offRoute ? s.raw : s.snapped) ?? s.snapped ?? s.raw;
+    if (_follow && displayPos != null) {
+      // Ease the zoom toward the speed-adaptive target so it changes smoothly.
+      final targetZoom = navZoomForSpeed(s.speedKmh ?? 0);
+      _zoom += (targetZoom - _zoom) * 0.2;
+      // Heading-up: rotate the map so the direction of travel points up, eased
+      // along the shortest angular path so it never spins.
+      if (s.courseDeg != null) {
+        _mapRotation = _easeAngleDeg(_mapRotation, -s.courseDeg!, 0.25);
+      }
+      _controller.moveAndRotate(displayPos, _zoom, _mapRotation);
     }
     // Reached the destination → automatically end the tour. Fires once, on the
     // transition into "arrived".
     if (s.arrived && !wasArrived) {
       _finishAutoTracking();
+    }
+    // Keep the "way back to the route" path in sync with the off-route state.
+    _ensureBackToRoute(s);
+  }
+
+  /// Ease an angle (degrees) toward [target] along the shortest path so the
+  /// 359°→1° wrap doesn't cause a near-full spin.
+  static double _easeAngleDeg(double current, double target, double t) {
+    var d = (target - current) % 360;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    return current + d * t;
+  }
+
+  /// While off-route, compute (and keep fresh) a route from where the rider
+  /// actually is back to the nearest point on the planned route. Throttled so
+  /// we don't hammer BRouter; falls back to a straight line if routing fails.
+  Future<void> _ensureBackToRoute(NavState s) async {
+    if (!s.offRoute) {
+      if (_backToRoute != null && mounted) setState(() => _backToRoute = null);
+      return;
+    }
+    final raw = s.raw;
+    final target = s.snapped;
+    if (raw == null || target == null || _backComputing) return;
+    final now = DateTime.now();
+    final fresh = _backToRoute != null &&
+        _lastBackAt != null &&
+        now.difference(_lastBackAt!) < const Duration(seconds: 5) &&
+        _lastBackFrom != null &&
+        haversineMeters(_lastBackFrom!, raw) < 40;
+    if (fresh) return;
+    _backComputing = true;
+    _lastBackAt = now;
+    _lastBackFrom = raw;
+    try {
+      final r = await _router
+          .route(waypoints: [raw, target], curviness: widget.curviness);
+      if (mounted && _state.offRoute) setState(() => _backToRoute = r.geometry);
+    } on RoutingException {
+      // Offline / no road: at least show the direction back as a straight line.
+      if (mounted && _state.offRoute) setState(() => _backToRoute = [raw, target]);
+    } finally {
+      _backComputing = false;
     }
   }
 
@@ -329,9 +391,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _recenter() {
     setState(() => _follow = true);
-    final p = _state.snapped ?? _geometry.first;
-    _zoom = navZoomForSpeed(_state.speedKmh ?? 0);
-    _controller.move(p, _zoom);
+    final s = _state;
+    final p = (s.offRoute ? s.raw : s.snapped) ?? s.snapped ?? _geometry.first;
+    _zoom = navZoomForSpeed(s.speedKmh ?? 0);
+    if (s.courseDeg != null) _mapRotation = -s.courseDeg!;
+    _controller.moveAndRotate(p, _zoom, _mapRotation);
   }
 
   @override
@@ -359,6 +423,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Widget build(BuildContext context) {
     final s = _state;
     final eta = DateTime.now().add(Duration(seconds: s.remainingSeconds));
+    final puckPos = (s.offRoute ? s.raw : s.snapped) ?? s.snapped ?? s.raw;
     return Scaffold(
       body: Stack(
         children: [
@@ -393,6 +458,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     borderStrokeWidth: 2.5,
                     borderColor: Colors.black.withValues(alpha: 0.4),
                   ),
+                  // Off-route: the quickest way back onto the planned route.
+                  if (s.offRoute &&
+                      _backToRoute != null &&
+                      _backToRoute!.length >= 2)
+                    Polyline(
+                      points: _backToRoute!,
+                      strokeWidth: 6,
+                      color: _backColor,
+                      borderStrokeWidth: 2,
+                      borderColor: Colors.black.withValues(alpha: 0.45),
+                      pattern: StrokePattern.dotted(spacingFactor: 1.5),
+                    ),
                 ],
               ),
               MarkerLayer(
@@ -404,12 +481,25 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     height: 34,
                     child: const _DestFlag(),
                   ),
-                  if (s.snapped != null)
+                  // Where to rejoin the route, while off it.
+                  if (s.offRoute && s.snapped != null)
                     Marker(
                       point: s.snapped!,
-                      width: 40,
-                      height: 40,
-                      child: _Chevron(headingDeg: s.headingDeg ?? 0),
+                      width: 20,
+                      height: 20,
+                      child: const _RejoinDot(),
+                    ),
+                  // The rider's position puck. Off-route it sits at the real GPS
+                  // position so the rider can see they left the line.
+                  if (puckPos != null)
+                    Marker(
+                      point: puckPos,
+                      width: 46,
+                      height: 46,
+                      child: _NavPuck(
+                        angleDeg: (s.courseDeg ?? 0) + _mapRotation,
+                        offRoute: s.offRoute,
+                      ),
                     ),
                 ],
               ),
@@ -544,11 +634,11 @@ class _NavTopCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
       decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: 0.96),
+        color: _navPanel,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.gridLine),
+        border: Border.all(color: _navBorder, width: 1.5),
       ),
       child: Row(
         children: [
@@ -589,8 +679,8 @@ class _NavTopCard extends StatelessWidget {
 
   Widget _divider() => Container(
         width: 1,
-        height: 34,
-        color: AppColors.gridLine,
+        height: 38,
+        color: _navBorder,
         margin: const EdgeInsets.symmetric(horizontal: 6),
       );
 
@@ -620,9 +710,9 @@ class _NavStat extends StatelessWidget {
             text: TextSpan(
               text: value,
               style: const TextStyle(
-                fontSize: 20,
+                fontSize: 25,
                 fontWeight: FontWeight.w900,
-                color: AppColors.text,
+                color: Colors.white,
                 letterSpacing: -0.5,
               ),
               children: [
@@ -630,16 +720,19 @@ class _NavStat extends StatelessWidget {
                   TextSpan(
                     text: ' $unit',
                     style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textMuted),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFB9C4DC)),
                   ),
               ],
             ),
           ),
           const SizedBox(height: 2),
           Text(label,
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
+              style: const TextStyle(
+                  color: Color(0xFFB9C4DC),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -663,9 +756,9 @@ class _NavBottomBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
       decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: 0.96),
+        color: _navPanel,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.gridLine),
+        border: Border.all(color: _navBorder, width: 1.5),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -674,8 +767,8 @@ class _NavBottomBar extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: progress.clamp(0.0, 1.0),
-              minHeight: 6,
-              backgroundColor: AppColors.gridLine,
+              minHeight: 7,
+              backgroundColor: _navBorder,
               color: AppColors.accent,
             ),
           ),
@@ -761,18 +854,37 @@ class _OffRouteBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
       decoration: BoxDecoration(
-        color: AppColors.danger.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(14),
+        color: const Color(0xFFE0352B), // opaque, high-contrast red
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.white),
+          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 26),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              'Abseits der Route (${meters.round()} m)',
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w700),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Abseits der Route (${meters.round()} m)',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15),
+                ),
+                const Text(
+                  'Weg zurück ist eingezeichnet',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ],
             ),
           ),
           rerouting
@@ -787,7 +899,11 @@ class _OffRouteBanner extends StatelessWidget {
                 )
               : TextButton(
                   onPressed: onReroute,
-                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    textStyle:
+                        const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                  ),
                   child: const Text('Neu berechnen'),
                 ),
         ],
@@ -810,13 +926,20 @@ class _InfoBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = dark ? Colors.black : AppColors.text;
+    final fg = dark ? Colors.black : Colors.white;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: dark ? 0.96 : 0.96),
+        color: color,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.gridLine),
+        border: Border.all(color: dark ? Colors.black26 : _navBorder, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -824,7 +947,8 @@ class _InfoBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(text,
-                style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
+                style: TextStyle(
+                    color: fg, fontWeight: FontWeight.w800, fontSize: 15)),
           ),
         ],
       ),
@@ -832,29 +956,64 @@ class _InfoBanner extends StatelessWidget {
   }
 }
 
-/// Direction chevron drawn at the snapped position, rotated to heading.
-class _Chevron extends StatelessWidget {
-  const _Chevron({required this.headingDeg});
-  final double headingDeg;
+/// Colour of the "way back to the route" path + its rejoin dot.
+const _backColor = Color(0xFF22D3EE);
+
+// High-contrast, fully opaque panel colours for navigation: translucent panels
+// wash out over a bright map in direct sun, so these are solid and near-black
+// with a brighter border for separation.
+const _navPanel = Color(0xFF0A0E1A);
+const _navBorder = Color(0xFF3A4E78);
+
+/// The rider's position puck. The navigation arrow points in the direction of
+/// travel — [angleDeg] is the on-screen angle (already accounting for the map
+/// rotation), so on a heading-up map it points straight up. Turns red when
+/// off-route to flag the deviation.
+class _NavPuck extends StatelessWidget {
+  const _NavPuck({required this.angleDeg, required this.offRoute});
+  final double angleDeg;
+  final bool offRoute;
 
   @override
   Widget build(BuildContext context) {
+    final color = offRoute ? const Color(0xFFFF3B30) : AppColors.accent;
     return Transform.rotate(
-      angle: headingDeg * 3.1415926535 / 180.0,
+      angle: angleDeg * 3.1415926535 / 180.0,
       child: Container(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppColors.accent,
-          border: Border.all(color: Colors.white, width: 3),
+          color: color,
+          border: Border.all(color: Colors.white, width: 3.5),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 6,
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 8,
               offset: const Offset(0, 2),
             ),
           ],
         ),
-        child: const Icon(Icons.navigation_rounded, color: Colors.black, size: 22),
+        child: const Icon(Icons.navigation_rounded, color: Colors.white, size: 26),
+      ),
+    );
+  }
+}
+
+/// Small marker at the nearest point on the route — where to rejoin it.
+class _RejoinDot extends StatelessWidget {
+  const _RejoinDot();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: _backColor,
+        border: Border.all(color: Colors.white, width: 2.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 4,
+          ),
+        ],
       ),
     );
   }
@@ -885,22 +1044,23 @@ class _ManeuverBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 18, 14),
       decoration: BoxDecoration(
         color: AppColors.accent,
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.25), width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 8,
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 10,
             offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Row(
         children: [
-          Icon(_maneuverIcon(maneuver), color: Colors.black, size: 42),
-          const SizedBox(width: 12),
+          Icon(_maneuverIcon(maneuver), color: Colors.black, size: 54),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -910,19 +1070,21 @@ class _ManeuverBanner extends StatelessWidget {
                   _fmtDist(meters),
                   style: const TextStyle(
                     color: Colors.black,
-                    fontSize: 22,
+                    fontSize: 32,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.5,
+                    height: 1.0,
                   ),
                 ),
+                const SizedBox(height: 2),
                 Text(
                   maneuver.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.black.withValues(alpha: 0.8),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
