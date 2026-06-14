@@ -192,6 +192,14 @@ class _PlanScreenState extends State<PlanScreen> {
     });
   }
 
+  /// Reset the planning canvas to a blank tour: drops the current waypoints,
+  /// route and search so the rider can plan a fresh one (e.g. after loading a
+  /// saved tour). Does NOT delete any saved tours — those live in [routeRepo].
+  void _newTour() {
+    _clearAll();
+    _clearSearch();
+  }
+
   /// Nearest waypoint to a screen point, if within [_grabRadiusPx].
   int? _waypointAt(Offset localPx) {
     final cam = _controller.camera;
@@ -434,14 +442,22 @@ class _PlanScreenState extends State<PlanScreen> {
   /// no fix) — the manual tap-to-set-start flow still works. Skips seeding if a
   /// waypoint was already placed (e.g. the rider tapped before the fix arrived).
   Future<void> _seedStartFromLocation() async {
-    setState(() => _locating = true);
-    final res = await LocationService.getCurrent();
+    // Runs from initState before the first build, so set the flag directly -
+    // setState is neither needed nor allowed here.
+    _locating = true;
+    LocationResult? res;
+    try {
+      res = await LocationService.getCurrent();
+    } catch (_) {
+      res = null; // location stack unavailable (e.g. no plugin under test)
+    }
     if (!mounted) return;
     var seeded = false;
     setState(() {
       _locating = false;
-      if (res.position != null) {
-        final p = LatLng(res.position!.latitude, res.position!.longitude);
+      final pos = res?.position;
+      if (pos != null) {
+        final p = LatLng(pos.latitude, pos.longitude);
         _userPos = p;
         if (_waypoints.isEmpty) {
           _waypoints.add(p);
@@ -771,7 +787,7 @@ class _PlanScreenState extends State<PlanScreen> {
                     _TopBar(
                       routing: _routing,
                       onSaved: _openSavedRoutes,
-                      onClear: _waypoints.isEmpty ? null : _clearAll,
+                      onNewTour: _newTour,
                       onReverse: _waypoints.length >= 2 ? _reverse : null,
                     ),
                     const SizedBox(height: 8),
@@ -1019,12 +1035,12 @@ class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.routing,
     required this.onSaved,
-    required this.onClear,
+    required this.onNewTour,
     required this.onReverse,
   });
   final bool routing;
   final VoidCallback onSaved;
-  final VoidCallback? onClear;
+  final VoidCallback onNewTour;
   final VoidCallback? onReverse;
 
   @override
@@ -1071,11 +1087,19 @@ class _TopBar extends StatelessWidget {
             icon: const Icon(Icons.folder_open_rounded),
             color: AppColors.textMuted,
           ),
-          IconButton(
-            tooltip: 'Alles löschen',
-            onPressed: onClear,
-            icon: const Icon(Icons.delete_outline_rounded),
-            color: AppColors.textMuted,
+          const SizedBox(width: 2),
+          // Explicit "start over" action — wipes the current waypoints/route so
+          // a fresh tour can be planned (e.g. after loading a saved one).
+          // Doesn't delete saved tours.
+          TextButton.icon(
+            onPressed: onNewTour,
+            icon: const Icon(Icons.add_road_rounded, size: 18),
+            label: const Text('Neue Tour'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              visualDensity: VisualDensity.compact,
+            ),
           ),
         ],
       ),
