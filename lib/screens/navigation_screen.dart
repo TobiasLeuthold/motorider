@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../main.dart';
 import '../models/curviness.dart';
 import '../services/geo.dart';
 import '../services/route_navigator.dart';
@@ -58,6 +59,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _follow = true;
   bool _rerouting = false;
   String? _gpsError;
+  // True only when THIS screen auto-started the ride tracker. Lets us end the
+  // tour exactly once and never stop a tour the rider began manually.
+  bool _autoTracking = false;
   static const _navZoom = 15.5;
 
   @override
@@ -78,6 +82,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _controller.move(_geometry.first, _navZoom);
     });
     _startGps();
+    // Recording the trip as a tour is part of "navigating", so auto-start it —
+    // the rider never has to remember to hit "Tour starten".
+    _startAutoTracking();
   }
 
   RouteNavigator _buildNavigator(List<LatLng> geom, int durationS) =>
@@ -89,6 +96,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _onNavState(NavState s) {
     if (!mounted) return;
+    final wasArrived = _state.arrived;
     // Consume vias as we pass them, so a reroute targets only what's ahead.
     final raw = s.raw;
     if (raw != null && _remainingDest.length > 1) {
@@ -99,6 +107,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() => _state = s);
     if (_follow && s.snapped != null) {
       _controller.move(s.snapped!, _controller.camera.zoom);
+    }
+    // Reached the destination → automatically end the tour. Fires once, on the
+    // transition into "arrived".
+    if (s.arrived && !wasArrived) {
+      _finishAutoTracking();
     }
   }
 
@@ -118,6 +131,47 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _gps = gps;
     setState(() => _gpsError = null);
     _fixSub = gps.stream.listen(_nav.update);
+  }
+
+  // ─────────────────────── Auto ride tracking ────────────────────────────
+
+  /// Records this navigation as a tour, unless the rider already has one
+  /// running (then theirs is left untouched). Best-effort: navigation still
+  /// works if tracking can't start (e.g. location permission denied).
+  Future<void> _startAutoTracking() async {
+    if (rideTracker.state.isTracking) return;
+    try {
+      await rideTracker.startRide();
+      if (!mounted) {
+        // Screen was popped while the tracker was still starting — stop it so
+        // it doesn't keep recording with no one left to end it.
+        await rideTracker.stopRide();
+        return;
+      }
+      _autoTracking = true;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Tour wird nicht aufgezeichnet: $e')),
+      );
+    }
+  }
+
+  /// Stops and saves the auto-started tour. Idempotent — the [_autoTracking]
+  /// guard plus RideTracker.stopRide()'s own guard make extra calls no-ops.
+  Future<void> _finishAutoTracking() async {
+    if (!_autoTracking) return;
+    _autoTracking = false;
+    final messenger = ScaffoldMessenger.of(context);
+    final ride = await rideTracker.stopRide();
+    if (ride == null || !mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          'Tour gespeichert: ${ride.distanceKm.toStringAsFixed(1)} km',
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleSimulate() async {
@@ -200,6 +254,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   void dispose() {
+    // Left navigation before arriving → stop the auto-started tour so it
+    // doesn't keep recording in the background. Fire-and-forget (the screen is
+    // going away); stopRide() still persists the ride. No-op if arrival already
+    // ended it.
+    if (_autoTracking) {
+      _autoTracking = false;
+      rideTracker.stopRide();
+    }
     _navSub?.cancel();
     _fixSub?.cancel();
     _gps?.dispose();
