@@ -210,6 +210,20 @@ class RideTracker {
     return finalized;
   }
 
+  /// Cancels the active ride WITHOUT keeping it — used when the recording turns
+  /// out to be junk (e.g. the rider switched navigation into simulation mode).
+  /// The ride is soft-deleted (tombstoned) so the discard also propagates to
+  /// the NAS instead of resurfacing on the next pull.
+  Future<void> discardRide() async {
+    if (!_state.isTracking) return;
+    await _positionSub?.cancel();
+    _positionSub = null;
+    final ride = _state.currentRide;
+    _emit(const TrackerState.idle());
+    _pointsBuffer.clear();
+    if (ride != null) await _repo.delete(ride.id);
+  }
+
   void _onPosition(Position pos) async {
     final ride = _state.currentRide;
     if (ride == null) return;

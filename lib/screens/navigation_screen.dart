@@ -7,8 +7,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../main.dart';
 import '../models/curviness.dart';
+import '../models/ride_point.dart';
 import '../services/geo.dart';
 import '../services/maneuvers.dart';
+import '../services/ride_tracker.dart';
 import '../services/route_navigator.dart';
 import '../services/routing_service.dart';
 import '../services/tile_cache.dart';
@@ -54,6 +56,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   StreamSubscription<NavState>? _navSub;
   StreamSubscription<NavFix>? _fixSub;
+  // When recording, navigation is driven by the ride tracker's GPS stream
+  // (a single shared location source) instead of a second [NavGps].
+  StreamSubscription<TrackerState>? _trackerFixSub;
   NavGps? _gps;
   RouteSimulator? _sim;
 
@@ -88,10 +93,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.move(_geometry.first, _navZoom);
     });
-    _startGps();
-    // Recording the trip as a tour is part of "navigating", so auto-start it —
-    // the rider never has to remember to hit "Tour starten".
-    _startAutoTracking();
+    _startSession();
   }
 
   RouteNavigator _buildNavigator(
@@ -103,6 +105,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
         geometry: geom,
         totalDurationS: durationS,
         maneuvers: maneuvers,
+        // A rider parks *near* the destination, not exactly on the end node;
+        // 35 m was too tight and often never latched "arrived" (so the tour
+        // never auto-ended). 60 m reliably detects arrival without false
+        // positives mid-route.
+        arriveRadiusM: 60,
       );
 
   void _subscribeNav() {
@@ -133,6 +140,39 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _finishAutoTracking();
     }
   }
+
+  /// Starts the navigation session. Recording the trip as a tour is part of
+  /// "navigating", so we auto-start it — and, to avoid running two GPS streams
+  /// (and two foreground-service notifications), the navigator is driven by the
+  /// recorder's fixes whenever recording is active. A standalone [NavGps] is
+  /// used only as a fallback when recording can't start.
+  Future<void> _startSession() async {
+    await _startAutoTracking();
+    if (!mounted) return;
+    if (rideTracker.state.isTracking) {
+      _useTrackerFixes();
+    } else {
+      await _startGps();
+    }
+  }
+
+  /// Feed the navigator from the ride tracker's GPS stream — the single shared
+  /// location source while recording. Survives a reroute: the closure reads the
+  /// current [_nav] field, so it keeps driving the rebuilt navigator.
+  void _useTrackerFixes() {
+    final last = rideTracker.state.lastPoint;
+    if (last != null) _nav.update(_fixFromPoint(last));
+    _trackerFixSub = rideTracker.changes.listen((s) {
+      final p = s.lastPoint;
+      if (p != null) _nav.update(_fixFromPoint(p));
+    });
+  }
+
+  NavFix _fixFromPoint(RidePoint p) => NavFix(
+        position: LatLng(p.lat, p.lon),
+        speedKmh: p.speedMs == null ? null : p.speedMs! * 3.6,
+        headingDeg: p.heading,
+      );
 
   Future<void> _startGps() async {
     await _sim?.dispose();
@@ -182,6 +222,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
     if (!_autoTracking) return;
     _autoTracking = false;
     final messenger = ScaffoldMessenger.of(context);
+    await _trackerFixSub?.cancel();
+    _trackerFixSub = null;
     final ride = await rideTracker.stopRide();
     if (ride == null || !mounted) return;
     messenger.showSnackBar(
@@ -193,13 +235,33 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
+  /// Discards (does NOT save) the auto-started tour — used when the rider
+  /// switches to simulation, so a junk ride recorded from the stationary real
+  /// GPS isn't persisted. A manually-started tour is left untouched.
+  Future<void> _discardAutoTracking() async {
+    if (!_autoTracking) return;
+    _autoTracking = false;
+    await rideTracker.discardRide();
+  }
+
   Future<void> _toggleSimulate() async {
     if (_simulating) {
       await _stopSim();
-      await _startGps();
+      // Resume the real fix source. The auto-tour was discarded on entering
+      // simulation, so if nothing is recording, guidance falls back to GPS.
+      if (rideTracker.state.isTracking) {
+        _useTrackerFixes();
+      } else {
+        await _startGps();
+      }
       return;
     }
-    // Switch to simulation.
+    // Switch to simulation. Entering it is a test action, so stop feeding the
+    // navigator from the tracker and discard the auto-started tour rather than
+    // saving a junk (stationary) ride.
+    await _trackerFixSub?.cancel();
+    _trackerFixSub = null;
+    await _discardAutoTracking();
     await _fixSub?.cancel();
     _fixSub = null;
     await _gps?.dispose();
@@ -284,6 +346,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
     _navSub?.cancel();
     _fixSub?.cancel();
+    _trackerFixSub?.cancel();
     _gps?.dispose();
     _sim?.dispose();
     _nav.dispose();
