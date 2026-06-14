@@ -403,46 +403,44 @@ class _DynamicsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final curv = detail.curvinessDegPerKm;
+    final left = detail.maxLeanLeftDeg;
+    final right = detail.maxLeanRightDeg;
+    final hasLean = left != null && right != null;
     return _ChartCard(
       title: 'Fahrdynamik',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (curv != null) ...[
+          if (hasLean) ...[
+            const Text(
+              'Max. Schräglage (geschätzt)',
+              style: TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.rotate_right_rounded,
-                    color: AppColors.accentSoft, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  'Kurvenfaktor ${curv.toStringAsFixed(0)}°/km',
-                  style: const TextStyle(
-                    color: AppColors.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+                Expanded(
+                  child: _LeanTile(
+                    icon: Icons.turn_left_rounded,
+                    side: 'Links',
+                    deg: left,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceHi,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    _curvinessLabel(curv),
-                    style: const TextStyle(
-                      color: AppColors.accentSoft,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _LeanTile(
+                    icon: Icons.turn_right_rounded,
+                    side: 'Rechts',
+                    deg: right,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
           ],
           const Text(
             'Tempo-Verteilung (Fahrzeit)',
@@ -458,12 +456,53 @@ class _DynamicsCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  String _curvinessLabel(double degPerKm) {
-    if (degPerKm < 30) return 'Geradeaus';
-    if (degPerKm < 70) return 'Leicht kurvig';
-    if (degPerKm < 130) return 'Kurvig';
-    return 'Sehr kurvig';
+/// One side's estimated maximum lean angle.
+class _LeanTile extends StatelessWidget {
+  const _LeanTile({required this.icon, required this.side, required this.deg});
+  final IconData icon;
+  final String side;
+  final double deg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceHi,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.gridLine),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.accentSoft, size: 24),
+          const SizedBox(width: 10),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${deg.round()}°',
+                style: const TextStyle(
+                  color: AppColors.text,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                side,
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 

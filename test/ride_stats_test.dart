@@ -40,6 +40,39 @@ List<RidePoint> trace(
   return points;
 }
 
+/// Build a constant-speed trace along a circular arc of [radiusM] at
+/// [speedKmh], turning right (clockwise) when [rightTurn], else left. Steady
+/// state means the lean estimate should converge to atan(v^2 / (r·g)).
+List<RidePoint> arcTrace({
+  required double speedKmh,
+  required double radiusM,
+  required int seconds,
+  required bool rightTurn,
+}) {
+  final v = speedKmh / 3.6;
+  final dPsi = (v / radiusM) * (rightTurn ? 1.0 : -1.0); // rad/s, + = clockwise
+  final start = DateTime.utc(2026, 6, 1, 10);
+  const lat0 = 47.0, lon0 = 8.0;
+  final mPerDegLon = _mPerDegLat * math.cos(lat0 * math.pi / 180);
+  final points = <RidePoint>[];
+  var x = 0.0, y = 0.0, psi = 0.0; // psi: compass heading (rad), 0 = north
+  for (var i = 0; i < seconds; i++) {
+    points.add(RidePoint(
+      rideId: 'r',
+      sequence: i,
+      ts: start.add(Duration(seconds: i)),
+      lat: lat0 + y / _mPerDegLat,
+      lon: lon0 + x / mPerDegLon,
+      speedMs: v,
+      accuracyM: 5,
+    ));
+    x += v * math.sin(psi); // east
+    y += v * math.cos(psi); // north
+    psi += dPsi;
+  }
+  return points;
+}
+
 void main() {
   group('computeStats max speed', () {
     test('clean constant 100 km/h ride reports ~100', () {
@@ -131,10 +164,33 @@ void main() {
       expect(d.fastestKmKmh!, lessThanOrEqualTo(112));
     });
 
-    test('straight ride has near-zero curviness', () {
+    test('straight ride has near-zero lean both sides', () {
       final d = computeDetailStats(trace(List.filled(240, 80.0)));
-      expect(d.curvinessDegPerKm, isNotNull);
-      expect(d.curvinessDegPerKm!, lessThan(10));
+      expect(d.maxLeanLeftDeg, isNotNull);
+      expect(d.maxLeanRightDeg, isNotNull);
+      expect(d.maxLeanLeftDeg!, lessThan(5));
+      expect(d.maxLeanRightDeg!, lessThan(5));
+    });
+
+    test('steady right-hand corner leans right by ~atan(v^2/rg)', () {
+      // 72 km/h (20 m/s) around a 100 m circle -> ~22.2° of lean to the right.
+      final d = computeDetailStats(
+        arcTrace(speedKmh: 72, radiusM: 100, seconds: 120, rightTurn: true),
+      );
+      final expected =
+          math.atan(400.0 / (100 * 9.80665)) * 180 / math.pi; // ~22.2°
+      expect(d.maxLeanRightDeg, isNotNull);
+      expect(d.maxLeanRightDeg!, closeTo(expected, 3));
+      expect(d.maxLeanLeftDeg!, lessThan(5)); // essentially no left lean
+    });
+
+    test('left-hand corner leans left, not right', () {
+      final d = computeDetailStats(
+        arcTrace(speedKmh: 72, radiusM: 100, seconds: 120, rightTurn: false),
+      );
+      final expected = math.atan(400.0 / (100 * 9.80665)) * 180 / math.pi;
+      expect(d.maxLeanLeftDeg!, closeTo(expected, 3));
+      expect(d.maxLeanRightDeg!, lessThan(5));
     });
 
     test('speed bands cover the moving time', () {
