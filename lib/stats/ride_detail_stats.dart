@@ -36,7 +36,8 @@ class RideDetailStats {
     required this.stopsCount,
     required this.longestStop,
     required this.fastestKmKmh,
-    required this.curvinessDegPerKm,
+    required this.maxLeanLeftDeg,
+    required this.maxLeanRightDeg,
     required this.speedBands,
   });
 
@@ -56,9 +57,12 @@ class RideDetailStats {
   /// Average speed over the fastest rolling kilometre, null if ride < 1 km.
   final double? fastestKmKmh;
 
-  /// Sum of absolute heading changes per km while riding — a "Kurvenfaktor".
-  /// Alpine pass ≈ 150+, Autobahn ≈ < 30. Null when too little data.
-  final double? curvinessDegPerKm;
+  /// Estimated maximum lean angle (degrees) the bike had to hold turning left
+  /// / right, from the steady-state identity θ = atan(v·ω / g) over GPS speed
+  /// and heading-rate. Independent of where the phone sits; it's the lean the
+  /// physics required, not a gyro reading. Null when there's too little data.
+  final double? maxLeanLeftDeg;
+  final double? maxLeanRightDeg;
 
   /// Moving-time distribution across speed bands. Fractions sum to ~1.
   final List<SpeedBand> speedBands;
@@ -67,8 +71,9 @@ class RideDetailStats {
 /// Minimum standstill length that counts as a "stop".
 const _stopMinDuration = Duration(seconds: 20);
 
-/// Bearings below this speed (km/h) are jitter spin, not steering.
-const _curvinessMinKmh = 15.0;
+/// Below this speed (km/h) GPS heading is jitter spin, not steering, so it is
+/// excluded from the lean estimate.
+const _leanMinKmh = 15.0;
 
 /// Chart series are capped at this many samples to keep fl_chart snappy on
 /// multi-hour rides (7000+ raw points).
@@ -87,7 +92,8 @@ RideDetailStats computeDetailStats(List<RidePoint> points) {
       stopsCount: 0,
       longestStop: Duration.zero,
       fastestKmKmh: null,
-      curvinessDegPerKm: null,
+      maxLeanLeftDeg: null,
+      maxLeanRightDeg: null,
       speedBands: [],
     );
   }
@@ -188,13 +194,25 @@ RideDetailStats computeDetailStats(List<RidePoint> points) {
     }
   }
 
-  // ── Curviness ──
-  double headingSum = 0;
-  var headingSamples = 0;
+  // ── Max lean angle (estimated from GPS) ──
+  // A bike must lean θ = atan(v·ω / g) to balance a corner taken at speed v
+  // with yaw rate ω. We read ω from the change in GPS heading between
+  // consecutive segments, gate out low speed (heading is jitter there),
+  // median-smooth to drop single-fix spikes, and keep the largest lean seen
+  // turning each way. It's the lean the bike *had* to do, not a gyro reading.
+  const g = 9.80665;
+  const maxPlausibleLeanDeg = 60.0;
+
+  // Signed yaw rate per boundary (deg/s, + = right / clockwise) with its speed.
+  final yawRate = List<double?>.filled(points.length, null);
+  final yawSpeedMs = List<double?>.filled(points.length, null);
   double? prevBearing;
+  DateTime? prevBearingTs;
   for (var i = 1; i < points.length; i++) {
-    if ((speeds[i] ?? 0) < _curvinessMinKmh) {
+    final v = speeds[i];
+    if (v == null || v < _leanMinKmh) {
       prevBearing = null;
+      prevBearingTs = null;
       continue;
     }
     final a = points[i - 1];
@@ -202,21 +220,52 @@ RideDetailStats computeDetailStats(List<RidePoint> points) {
     final dtSec = b.ts.difference(a.ts).inMilliseconds / 1000.0;
     if (dtSec <= 0 || dtSec > 10) {
       prevBearing = null;
+      prevBearingTs = null;
       continue;
     }
     final bearing = _bearingDeg(a.lat, a.lon, b.lat, b.lon);
-    if (prevBearing != null) {
-      var delta = (bearing - prevBearing).abs();
-      if (delta > 180) delta = 360 - delta;
-      headingSum += delta;
-      headingSamples++;
+    if (prevBearing != null && prevBearingTs != null) {
+      final rateDt = b.ts.difference(prevBearingTs).inMilliseconds / 1000.0;
+      if (rateDt >= 0.5 && rateDt <= 10) {
+        var delta = bearing - prevBearing;
+        delta = (delta + 540) % 360 - 180; // normalize to (-180, 180]
+        yawRate[i] = delta / rateDt; // deg/s, signed (+right / -left)
+        yawSpeedMs[i] = v / 3.6;
+      }
     }
     prevBearing = bearing;
+    prevBearingTs = b.ts;
+  }
+
+  double? leftMax;
+  double? rightMax;
+  var leanSamples = 0;
+  for (var i = 0; i < points.length; i++) {
+    final r = yawRate[i];
+    final vMs = yawSpeedMs[i];
+    if (r == null || vMs == null) continue;
+    // 3-wide median of the signed yaw rate: kills isolated GPS spikes while
+    // preserving a sustained corner.
+    final window = <double>[
+      if (i - 1 >= 0 && yawRate[i - 1] != null) yawRate[i - 1]!,
+      r,
+      if (i + 1 < points.length && yawRate[i + 1] != null) yawRate[i + 1]!,
+    ]..sort();
+    final smoothed = window[window.length ~/ 2];
+    final omegaRad = smoothed.abs() * math.pi / 180.0;
+    final leanDeg =
+        math.min(math.atan(vMs * omegaRad / g) * 180.0 / math.pi, maxPlausibleLeanDeg);
+    leanSamples++;
+    if (smoothed > 0) {
+      if (rightMax == null || leanDeg > rightMax) rightMax = leanDeg;
+    } else if (smoothed < 0) {
+      if (leftMax == null || leanDeg > leftMax) leftMax = leanDeg;
+    }
   }
   final totalKm = cumKm.last;
-  final curviness = (headingSamples >= 30 && totalKm >= 1.0)
-      ? headingSum / totalKm
-      : null;
+  final enoughLeanData = leanSamples >= 30 && totalKm >= 1.0;
+  final maxLeanLeftDeg = enoughLeanData ? (leftMax ?? 0.0) : null;
+  final maxLeanRightDeg = enoughLeanData ? (rightMax ?? 0.0) : null;
 
   // ── Speed bands (share of moving time) ──
   final bandMs = List<double>.filled(_bandEdges.length + 1, 0);
@@ -252,7 +301,8 @@ RideDetailStats computeDetailStats(List<RidePoint> points) {
     stopsCount: stopsCount,
     longestStop: longestStop,
     fastestKmKmh: fastestKmKmh,
-    curvinessDegPerKm: curviness,
+    maxLeanLeftDeg: maxLeanLeftDeg,
+    maxLeanRightDeg: maxLeanRightDeg,
     speedBands: speedBands,
   );
 }
