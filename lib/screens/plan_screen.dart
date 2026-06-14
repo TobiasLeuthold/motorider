@@ -12,6 +12,7 @@ import '../models/planned_route.dart';
 import '../services/geo.dart';
 import '../services/geocoding_service.dart';
 import '../services/location_service.dart';
+import '../services/road_snap_service.dart';
 import '../services/routing_service.dart';
 import '../services/tile_cache.dart';
 import '../theme.dart';
@@ -36,6 +37,12 @@ class _PlanScreenState extends State<PlanScreen> {
   final _controller = MapController();
   final _router = RoutingService();
   final _geocoder = GeocodingService();
+  final _roadSnap = RoadSnapService();
+
+  /// Vias are soft guides: the route only has to pass within this many metres of
+  /// a via, taking the best road there, rather than threading exactly through
+  /// the dropped pin (which can force a detour onto a tiny lane).
+  static const double _viaSnapRadiusM = 500;
 
   static const _swissCenter = LatLng(46.8182, 8.2275);
 
@@ -107,6 +114,7 @@ class _PlanScreenState extends State<PlanScreen> {
     _searchFocus.dispose();
     _router.dispose();
     _geocoder.dispose();
+    _roadSnap.dispose();
     _tileProvider?.dispose();
     super.dispose();
   }
@@ -279,8 +287,10 @@ class _PlanScreenState extends State<PlanScreen> {
       _error = null;
     });
     try {
+      final routingWps = await _routingWaypoints();
+      if (!mounted || req != _reqId) return;
       final r = await _router.route(
-        waypoints: List.of(_waypoints),
+        waypoints: routingWps,
         curviness: _curviness,
       );
       if (!mounted || req != _reqId) return;
@@ -301,6 +311,27 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
+  /// The waypoint list actually sent to the router. Start and end stay exactly
+  /// where the rider dropped them, but each intermediate via is softened: it's
+  /// snapped to the nearest proper road within [_viaSnapRadiusM] so the route
+  /// passes *near* it on a sensible road instead of being forced through
+  /// whatever lane the pin sits on. The on-screen pins are untouched — only the
+  /// routing coordinate moves. Snap misses (offline, no road in range) fall back
+  /// to the raw pin, so routing always proceeds.
+  Future<List<LatLng>> _routingWaypoints() async {
+    final wps = List.of(_waypoints);
+    if (wps.length <= 2) return wps; // no vias to soften
+    return Future.wait([
+      for (var i = 0; i < wps.length; i++)
+        (i == 0 || i == wps.length - 1)
+            ? Future.value(wps[i])
+            : _roadSnap
+                .nearestRoad(wps[i], radiusMeters: _viaSnapRadiusM)
+                .then((snapped) => snapped ?? wps[i])
+                .catchError((Object _) => wps[i]),
+    ]);
+  }
+
   void _setCurviness(Curviness c) {
     if (c == _curviness) return;
     setState(() => _curviness = c);
@@ -310,7 +341,6 @@ class _PlanScreenState extends State<PlanScreen> {
   // ──────────────────────────── Search ───────────────────────────────────
 
   void _onSearchChanged(String value) {
-    debugPrint('[motorider] search onChanged: "$value"');
     _searchDebounce?.cancel();
     final q = value.trim();
     if (q.length < GeocodingService.minQueryLength) {
@@ -335,7 +365,6 @@ class _PlanScreenState extends State<PlanScreen> {
     }
     try {
       final results = await _geocoder.search(query, bias: bias);
-      debugPrint('[motorider] search results for "$query": ${results.length}');
       if (!mounted || req != _searchReqId) return;
       setState(() {
         _searchResults = results;

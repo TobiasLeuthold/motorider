@@ -39,11 +39,22 @@ class GeocodingException implements Exception {
 /// Swap [baseUrl] to a self-hosted Photon instance later without touching
 /// callers.
 class GeocodingService {
-  GeocodingService({http.Client? client, this.baseUrl = _defaultBase})
-      : _client = client ?? http.Client(),
+  GeocodingService({
+    http.Client? client,
+    this.baseUrl = _defaultBase,
+    this.userAgent = _defaultUserAgent,
+  })  : _client = client ?? http.Client(),
         _ownsClient = client == null;
 
   static const _defaultBase = 'https://photon.komoot.io/api';
+
+  /// Photon's public server rejects the default Dart user-agent with HTTP 403
+  /// (and komoot's usage policy asks for an identifiable agent anyway), so we
+  /// always send our own.
+  static const _defaultUserAgent = 'MotoRider/1.0 (ch.tleuthold.motorider)';
+
+  /// Sent as the `User-Agent` on every request.
+  final String userAgent;
 
   /// Don't bother querying for very short fragments — they return noise and
   /// waste requests.
@@ -79,7 +90,9 @@ class GeocodingService {
 
     final http.Response res;
     try {
-      res = await _client.get(uri).timeout(timeout);
+      res = await _client
+          .get(uri, headers: {'User-Agent': userAgent})
+          .timeout(timeout);
     } catch (e) {
       throw GeocodingException('Suche nicht erreichbar ($e).');
     }
