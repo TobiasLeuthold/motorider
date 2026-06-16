@@ -1,16 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../main.dart';
 import '../models/curviness.dart';
 import '../models/planned_route.dart';
 import '../services/geo.dart';
 import '../services/geocoding_service.dart';
+import '../services/gpx_export.dart';
 import '../services/location_service.dart';
 import '../services/road_snap_service.dart';
 import '../services/routing_service.dart';
@@ -67,6 +71,10 @@ class _PlanScreenState extends State<PlanScreen> {
 
   int? _selected; // selected waypoint index (for the action chip)
   bool _didFit = false;
+
+  /// Name of the saved tour currently loaded on the canvas, if any — used as
+  /// the default file name when exporting the on-screen route to GPX.
+  String? _loadedName;
 
   LatLng? _userPos;
   bool _locating = false;
@@ -189,6 +197,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _error = null;
       _selected = null;
       _didFit = false;
+      _loadedName = null;
     });
   }
 
@@ -495,7 +504,7 @@ class _PlanScreenState extends State<PlanScreen> {
   Future<void> _save() async {
     final route = _route;
     if (route == null) return;
-    final defaultName = 'Tour ${DateFormat('dd.MM.').format(DateTime.now())}';
+    final defaultName = _defaultRouteName;
     final name = await _promptName(defaultName);
     if (name == null) return;
     final pr = PlannedRoute(
@@ -543,6 +552,7 @@ class _PlanScreenState extends State<PlanScreen> {
 
   void _loadRoute(PlannedRoute pr) {
     setState(() {
+      _loadedName = pr.name;
       _waypoints
         ..clear()
         ..addAll(pr.waypoints);
@@ -576,6 +586,7 @@ class _PlanScreenState extends State<PlanScreen> {
           Navigator.of(ctx).pop();
           _loadRoute(pr);
         },
+        onExport: _exportSaved,
       ),
     );
   }
@@ -595,6 +606,57 @@ class _PlanScreenState extends State<PlanScreen> {
         maneuvers: route.maneuvers,
       ),
     ));
+  }
+
+  // ──────────────────────────── GPX export ───────────────────────────────
+
+  /// Default name for an unsaved tour (mirrors the suggestion in [_save]).
+  String get _defaultRouteName =>
+      'Tour ${DateFormat('dd.MM.').format(DateTime.now())}';
+
+  /// Export the route currently on the canvas as a `.gpx` file via the OS share
+  /// sheet. Uses the loaded tour's name when one is known, else a dated default.
+  Future<void> _exportCurrent() async {
+    final route = _route;
+    if (route == null) return;
+    await _shareGpx(
+      name: _loadedName ?? _defaultRouteName,
+      geometry: route.geometry,
+      waypoints: _waypoints,
+    );
+  }
+
+  /// Export an already-saved tour straight from the saved-routes sheet.
+  Future<void> _exportSaved(PlannedRoute pr) => _shareGpx(
+        name: pr.name,
+        geometry: pr.geometry,
+        waypoints: pr.waypoints,
+      );
+
+  /// Serialise [geometry] + [waypoints] to GPX, drop it in a temp file and hand
+  /// it to the OS share sheet so the rider can send it to a GPS / nav app.
+  Future<void> _shareGpx({
+    required String name,
+    required List<LatLng> geometry,
+    required List<LatLng> waypoints,
+  }) async {
+    try {
+      final gpx = buildGpx(name: name, geometry: geometry, waypoints: waypoints);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/${gpxFilename(name)}');
+      await file.writeAsString(gpx);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'application/gpx+xml')],
+          subject: name,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export fehlgeschlagen: $e')),
+      );
+    }
   }
 
   // ──────────────────────────── Offline tiles ────────────────────────────
@@ -861,6 +923,7 @@ class _PlanScreenState extends State<PlanScreen> {
                   onSave: hasRoute ? _save : null,
                   onNavigate: hasRoute ? _navigate : null,
                   onOffline: hasRoute ? _downloadOffline : null,
+                  onExport: hasRoute ? _exportCurrent : null,
                 ),
               ),
             ),
@@ -1149,6 +1212,7 @@ class _BottomPanel extends StatelessWidget {
     required this.onSave,
     required this.onNavigate,
     required this.onOffline,
+    required this.onExport,
   });
 
   final int waypointCount;
@@ -1164,6 +1228,7 @@ class _BottomPanel extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onNavigate;
   final VoidCallback? onOffline;
+  final VoidCallback? onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -1256,6 +1321,12 @@ class _BottomPanel extends StatelessWidget {
                   icon: Icons.download_for_offline_outlined,
                   tooltip: 'Offline-Karte',
                   onTap: onOffline,
+                ),
+                const SizedBox(width: 8),
+                _SquareAction(
+                  icon: Icons.ios_share_rounded,
+                  tooltip: 'GPX exportieren',
+                  onTap: onExport,
                 ),
               ],
             ),
@@ -1575,8 +1646,9 @@ class _UserDot extends StatelessWidget {
 
 /// Bottom sheet listing saved tours, with open + delete.
 class _SavedRoutesSheet extends StatelessWidget {
-  const _SavedRoutesSheet({required this.onOpen});
+  const _SavedRoutesSheet({required this.onOpen, required this.onExport});
   final ValueChanged<PlannedRoute> onOpen;
+  final ValueChanged<PlannedRoute> onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -1631,10 +1703,22 @@ class _SavedRoutesSheet extends StatelessWidget {
                             style: const TextStyle(
                                 color: AppColors.textMuted, fontSize: 12),
                           ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline_rounded,
-                                color: AppColors.textMuted),
-                            onPressed: () => routeRepo.delete(r.id),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'GPX exportieren',
+                                icon: const Icon(Icons.ios_share_rounded,
+                                    color: AppColors.textMuted),
+                                onPressed: () => onExport(r),
+                              ),
+                              IconButton(
+                                tooltip: 'Tour löschen',
+                                icon: const Icon(Icons.delete_outline_rounded,
+                                    color: AppColors.textMuted),
+                                onPressed: () => routeRepo.delete(r.id),
+                              ),
+                            ],
                           ),
                           onTap: () => onOpen(r),
                         );
