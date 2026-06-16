@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
@@ -514,35 +515,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ],
           ),
 
-          // Top: next-turn banner (Google-Maps style) + compact stats card.
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: Column(
-                  children: [
-                    if (s.nextManeuver != null && !s.offRoute && !s.arrived) ...[
-                      _ManeuverBanner(
-                        maneuver: s.nextManeuver!,
-                        meters: s.nextManeuverMeters,
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    _NavTopCard(
-                      remainingKm: s.remainingKm,
-                      remainingSeconds: s.remainingSeconds,
-                      eta: eta,
-                      speedKmh: s.speedKmh,
-                      onClose: () => Navigator.of(context).maybePop(),
-                    ),
-                  ],
+          // Top: just the next-turn banner (Google-Maps style). The trip stats
+          // (Rest / Fahrzeit / Ankunft / Tempo) now live in the bottom bar so
+          // they don't cover the map ahead.
+          if (s.nextManeuver != null && !s.offRoute && !s.arrived)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                  child: _ManeuverBanner(
+                    maneuver: s.nextManeuver!,
+                    meters: s.nextManeuverMeters,
+                  ),
                 ),
               ),
             ),
-          ),
 
           if (_gpsError != null)
             Positioned(
@@ -593,25 +583,39 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (!_follow)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: FloatingActionButton.extended(
-                            heroTag: 'recenter',
-                            onPressed: _recenter,
-                            backgroundColor: AppColors.surface,
-                            foregroundColor: AppColors.accent,
-                            icon: const Icon(Icons.my_location_rounded),
-                            label: const Text('Zentrieren'),
-                          ),
+                    // Floating controls above the stats bar: the dev-only GPS
+                    // simulator toggle (hidden in release — it's a testing aid,
+                    // not a riding control) on the left, and the "recenter" pill
+                    // (only while the rider has panned away) on the right.
+                    if (kDebugMode || !_follow)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            if (kDebugMode)
+                              _SimToggleMini(
+                                simulating: _simulating,
+                                onTap: _toggleSimulate,
+                              ),
+                            const Spacer(),
+                            if (!_follow)
+                              FloatingActionButton.extended(
+                                heroTag: 'recenter',
+                                onPressed: _recenter,
+                                backgroundColor: AppColors.surface,
+                                foregroundColor: AppColors.accent,
+                                icon: const Icon(Icons.my_location_rounded),
+                                label: const Text('Zentrieren'),
+                              ),
+                          ],
                         ),
                       ),
                     _NavBottomBar(
+                      remainingKm: s.remainingKm,
+                      remainingSeconds: s.remainingSeconds,
+                      eta: eta,
+                      speedKmh: s.speedKmh,
                       progress: s.traveledFraction,
-                      simulating: _simulating,
-                      onSimulate: _toggleSimulate,
                       onExit: () => Navigator.of(context).maybePop(),
                     ),
                   ],
@@ -622,83 +626,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
         ],
       ),
     );
-  }
-}
-
-class _NavTopCard extends StatelessWidget {
-  const _NavTopCard({
-    required this.remainingKm,
-    required this.remainingSeconds,
-    required this.eta,
-    required this.speedKmh,
-    required this.onClose,
-  });
-  final double remainingKm;
-  final int remainingSeconds;
-  final DateTime eta;
-  final double? speedKmh;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-      decoration: BoxDecoration(
-        color: _navPanel,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _navBorder, width: 1.5),
-      ),
-      child: Row(
-        children: [
-          _NavStat(
-            value: remainingKm >= 10
-                ? remainingKm.toStringAsFixed(0)
-                : remainingKm.toStringAsFixed(1),
-            unit: 'km',
-            label: 'Rest',
-          ),
-          _divider(),
-          _NavStat(
-            value: _fmtMin(remainingSeconds),
-            unit: 'min',
-            label: 'Fahrzeit',
-          ),
-          _divider(),
-          _NavStat(
-            value: DateFormat('HH:mm').format(eta),
-            unit: '',
-            label: 'Ankunft',
-          ),
-          _divider(),
-          _NavStat(
-            value: (speedKmh ?? 0).round().toString(),
-            unit: 'km/h',
-            label: 'Tempo',
-          ),
-          IconButton(
-            tooltip: 'Beenden',
-            onPressed: onClose,
-            icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _divider() => Container(
-        width: 1,
-        height: 38,
-        color: _navBorder,
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-      );
-
-  static String _fmtMin(int seconds) {
-    final m = (seconds / 60).round();
-    if (m >= 60) {
-      final h = m ~/ 60;
-      return '${h}h${(m % 60).toString().padLeft(2, '0')}';
-    }
-    return '$m';
   }
 }
 
@@ -747,22 +674,30 @@ class _NavStat extends StatelessWidget {
   }
 }
 
+/// Bottom navigation panel (Google-Maps style): a progress bar, the live trip
+/// stats (remaining distance / time / ETA / speed), and a small round button to
+/// end navigation. The stats used to sit in a top card but covered the map
+/// ahead, so they moved down here.
 class _NavBottomBar extends StatelessWidget {
   const _NavBottomBar({
+    required this.remainingKm,
+    required this.remainingSeconds,
+    required this.eta,
+    required this.speedKmh,
     required this.progress,
-    required this.simulating,
-    required this.onSimulate,
     required this.onExit,
   });
+  final double remainingKm;
+  final int remainingSeconds;
+  final DateTime eta;
+  final double? speedKmh;
   final double progress;
-  final bool simulating;
-  final VoidCallback onSimulate;
   final VoidCallback onExit;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
       decoration: BoxDecoration(
         color: _navPanel,
         borderRadius: BorderRadius.circular(18),
@@ -783,20 +718,49 @@ class _NavBottomBar extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              // Simulation is a testing aid — kept as a small, unobtrusive
-              // icon rather than a prominent button you'd hit while riding.
-              _SimToggleMini(simulating: simulating, onTap: onSimulate),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: onExit,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.surfaceHi,
-                    foregroundColor: AppColors.text,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+              _NavStat(
+                value: remainingKm >= 10
+                    ? remainingKm.toStringAsFixed(0)
+                    : remainingKm.toStringAsFixed(1),
+                unit: 'km',
+                label: 'Rest',
+              ),
+              _divider(),
+              _NavStat(
+                value: _fmtMin(remainingSeconds),
+                unit: 'min',
+                label: 'Fahrzeit',
+              ),
+              _divider(),
+              _NavStat(
+                value: DateFormat('HH:mm').format(eta),
+                unit: '',
+                label: 'Ankunft',
+              ),
+              _divider(),
+              _NavStat(
+                value: (speedKmh ?? 0).round().toString(),
+                unit: 'km/h',
+                label: 'Tempo',
+              ),
+              const SizedBox(width: 6),
+              // Compact "end navigation" button — was a full-width bar that
+              // dominated the screen.
+              Tooltip(
+                message: 'Navigation beenden',
+                child: Material(
+                  color: const Color(0xFFE0352B),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: onExit,
+                    child: const SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Icon(Icons.close_rounded,
+                          color: Colors.white, size: 24),
+                    ),
                   ),
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  label: const Text('Navigation beenden'),
                 ),
               ),
             ],
@@ -804,6 +768,22 @@ class _NavBottomBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _divider() => Container(
+        width: 1,
+        height: 36,
+        color: _navBorder,
+        margin: const EdgeInsets.symmetric(horizontal: 5),
+      );
+
+  static String _fmtMin(int seconds) {
+    final m = (seconds / 60).round();
+    if (m >= 60) {
+      final h = m ~/ 60;
+      return '${h}h${(m % 60).toString().padLeft(2, '0')}';
+    }
+    return '$m';
   }
 }
 
