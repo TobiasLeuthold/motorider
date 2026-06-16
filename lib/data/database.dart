@@ -32,7 +32,7 @@ class AppDatabase {
     }
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await _createFillupsV2(db);
         await _createRidesAndPoints(db);
@@ -78,8 +78,20 @@ class AppDatabase {
           await db.execute('ALTER TABLE rides ADD COLUMN weather_fetched_at TEXT');
         }
         if (oldVersion < 5) {
-          // v4 → v5: planned tours (route planner + navigator).
+          // v4 → v5: planned tours (route planner + navigator). Creates the
+          // table at its current shape (incl. leg_curviness_json), so the
+          // v5 → v6 step below must NOT also add that column for these rows.
           await _createPlannedRoutes(db);
+        }
+        if (oldVersion >= 5 && oldVersion < 6) {
+          // v5 → v6: per-leg curviness on planned tours. Only the v5 table is
+          // missing this column — a fresh v4→v5 create above already has it.
+          // Empty (default '[]') means "no per-leg choices": every leg falls
+          // back to the scalar curviness, so existing tours load unchanged.
+          await db.execute(
+            "ALTER TABLE planned_routes "
+            "ADD COLUMN leg_curviness_json TEXT NOT NULL DEFAULT '[]'",
+          );
         }
       },
     );
@@ -166,6 +178,7 @@ class AppDatabase {
         waypoints_json TEXT NOT NULL,
         geometry_json TEXT NOT NULL,
         curviness INTEGER NOT NULL DEFAULT 1,
+        leg_curviness_json TEXT NOT NULL DEFAULT '[]',
         distance_m REAL NOT NULL DEFAULT 0,
         duration_s INTEGER NOT NULL DEFAULT 0,
         ascent_m REAL,

@@ -56,6 +56,41 @@ void main() {
     expect(got.curvinessScore, 220);
   });
 
+  test('per-leg curviness survives an upsert/getAll round-trip', () async {
+    final repo = RouteRepository(AppDatabase.instance);
+    final r = PlannedRoute(
+      name: 'Mixed tour',
+      waypoints: const [
+        LatLng(46.57, 8.42),
+        LatLng(46.59, 8.41),
+        LatLng(46.61, 8.40),
+      ],
+      curviness: Curviness.balanced,
+      legCurviness: const [Curviness.fast, Curviness.extra],
+      geometry: const [LatLng(46.57, 8.42), LatLng(46.61, 8.40)],
+      distanceM: 5000,
+      durationS: 600,
+    );
+    await repo.upsert(r);
+
+    final got = (await repo.getAll()).first;
+    expect(got.legCurviness, const [Curviness.fast, Curviness.extra]);
+    expect(got.effectiveLegCurviness(),
+        const [Curviness.fast, Curviness.extra]);
+  });
+
+  test('a tour saved without per-leg curviness loads with scalar fallback',
+      () async {
+    final repo = RouteRepository(AppDatabase.instance);
+    // No legCurviness → mimics a tour saved before the feature existed.
+    final r = sample(); // curviness: extra, 2 waypoints → 1 leg
+    await repo.upsert(r);
+
+    final got = (await repo.getAll()).first;
+    expect(got.legCurviness, isEmpty);
+    expect(got.effectiveLegCurviness(), const [Curviness.extra]);
+  });
+
   test('delete tombstones the tour (hidden from getAll)', () async {
     final repo = RouteRepository(AppDatabase.instance);
     final r = sample();

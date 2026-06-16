@@ -19,6 +19,7 @@ class PlannedRoute {
     required this.waypoints,
     this.geometry = const [],
     this.curviness = Curviness.balanced,
+    this.legCurviness = const [],
     this.distanceM = 0,
     this.durationS = 0,
     this.ascentM,
@@ -43,6 +44,13 @@ class PlannedRoute {
 
   final Curviness curviness;
 
+  /// Per-leg curviness levels — one entry per leg (`waypoints.length - 1`). A
+  /// rider can dial each segment of the tour separately. Empty means "no
+  /// per-leg choices" and every leg falls back to the scalar [curviness]; this
+  /// keeps tours saved before per-leg curviness existed loading unchanged. Use
+  /// [effectiveLegCurviness] to read a fully-resolved, per-leg list.
+  final List<Curviness> legCurviness;
+
   final double distanceM;
   final int durationS;
   final double? ascentM;
@@ -59,11 +67,24 @@ class PlannedRoute {
   double get distanceKm => distanceM / 1000.0;
   Duration get duration => Duration(seconds: durationS);
 
+  /// Per-leg curviness resolved against [waypoints]: a list of length
+  /// `max(0, waypoints.length - 1)`, where any leg not explicitly set (incl.
+  /// every leg of an old saved tour with empty [legCurviness]) falls back to
+  /// the scalar [curviness].
+  List<Curviness> effectiveLegCurviness() {
+    final legs = waypoints.length <= 1 ? 0 : waypoints.length - 1;
+    return [
+      for (var i = 0; i < legs; i++)
+        i < legCurviness.length ? legCurviness[i] : curviness,
+    ];
+  }
+
   PlannedRoute copyWith({
     String? name,
     List<LatLng>? waypoints,
     List<LatLng>? geometry,
     Curviness? curviness,
+    List<Curviness>? legCurviness,
     double? distanceM,
     int? durationS,
     Object? ascentM = _sentinel,
@@ -79,6 +100,7 @@ class PlannedRoute {
       waypoints: waypoints ?? this.waypoints,
       geometry: geometry ?? this.geometry,
       curviness: curviness ?? this.curviness,
+      legCurviness: legCurviness ?? this.legCurviness,
       distanceM: distanceM ?? this.distanceM,
       durationS: durationS ?? this.durationS,
       ascentM: identical(ascentM, _sentinel) ? this.ascentM : ascentM as double?,
@@ -107,6 +129,22 @@ class PlannedRoute {
     ];
   }
 
+  /// Per-leg curviness as a JSON array of enum indices, e.g. `[0,2,3]`.
+  static String encodeCurviness(List<Curviness> levels) =>
+      jsonEncode([for (final c in levels) c.index]);
+
+  static List<Curviness> decodeCurviness(Object? raw) {
+    if (raw == null) return const [];
+    final s = raw as String;
+    if (s.isEmpty) return const [];
+    final decoded = jsonDecode(s);
+    if (decoded is! List) return const [];
+    return [
+      for (final e in decoded)
+        if (e is num) Curviness.fromIndex(e.toInt()),
+    ];
+  }
+
   Map<String, Object?> toMap() {
     return {
       'id': id,
@@ -114,6 +152,7 @@ class PlannedRoute {
       'waypoints_json': encodePoints(waypoints),
       'geometry_json': encodePoints(geometry),
       'curviness': curviness.index,
+      'leg_curviness_json': encodeCurviness(legCurviness),
       'distance_m': distanceM,
       'duration_s': durationS,
       'ascent_m': ascentM,
@@ -134,6 +173,7 @@ class PlannedRoute {
       waypoints: decodePoints(m['waypoints_json']),
       geometry: decodePoints(m['geometry_json']),
       curviness: Curviness.fromIndex(((m['curviness'] as num?) ?? 1).toInt()),
+      legCurviness: decodeCurviness(m['leg_curviness_json']),
       distanceM: ((m['distance_m'] as num?) ?? 0).toDouble(),
       durationS: ((m['duration_s'] as num?) ?? 0).toInt(),
       ascentM: (m['ascent_m'] as num?)?.toDouble(),

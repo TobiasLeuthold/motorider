@@ -37,6 +37,71 @@ class RouteResult {
   Duration get duration => Duration(seconds: durationS);
 }
 
+/// Fuse per-leg [RouteResult]s (in tour order, as produced by
+/// [RoutingService.routeLegs]) into a single end-to-end route:
+///
+///  * geometries are joined, dropping the duplicate shared node where one leg
+///    ends and the next begins (the last point of leg i equals the first point
+///    of leg i+1, since both are routed to/from the same waypoint),
+///  * distance, duration and ascent are summed,
+///  * the overall [RouteResult.curviness] is recomputed from the joined line
+///    (so a mixed-curviness tour reports its true °/km, not a leg average),
+///  * maneuvers are concatenated with each leg's `geometryIndex` shifted by the
+///    running length of the joined geometry, so they keep pointing at the right
+///    vertex after the shared-node de-duplication.
+///
+/// The [RouteResult.profile] is the common leg profile, or `'mixed'` when legs
+/// used different ones.
+RouteResult concatRouteLegs(List<RouteResult> legs) {
+  if (legs.isEmpty) {
+    throw const RoutingException('Keine Route gefunden.');
+  }
+  if (legs.length == 1) return legs.first;
+
+  final geometry = <LatLng>[];
+  final maneuvers = <Maneuver>[];
+  var distanceM = 0.0;
+  var durationS = 0;
+  double? ascentM;
+
+  for (var i = 0; i < legs.length; i++) {
+    final leg = legs[i];
+    // Points already in the joined line before this leg is appended. For legs
+    // after the first we skip their first point (the shared node) and shift
+    // their maneuver indices so index 0 maps back onto that shared node, which
+    // now lives at `base - 1` (the previous leg's last point).
+    final base = geometry.length;
+    if (i == 0) {
+      geometry.addAll(leg.geometry);
+      maneuvers.addAll(leg.maneuvers);
+    } else {
+      geometry.addAll(leg.geometry.skip(1));
+      for (final m in leg.maneuvers) {
+        maneuvers.add(Maneuver(
+          geometryIndex: base - 1 + m.geometryIndex,
+          command: m.command,
+          exitNumber: m.exitNumber,
+        ));
+      }
+    }
+
+    distanceM += leg.distanceM;
+    durationS += leg.durationS;
+    if (leg.ascentM != null) ascentM = (ascentM ?? 0) + leg.ascentM!;
+  }
+
+  final profiles = {for (final l in legs) l.profile};
+  return RouteResult(
+    geometry: geometry,
+    distanceM: distanceM,
+    durationS: durationS,
+    ascentM: ascentM,
+    curviness: curvinessScore(geometry),
+    profile: profiles.length == 1 ? profiles.first : 'mixed',
+    maneuvers: maneuvers,
+  );
+}
+
 /// Thrown when a route cannot be computed (network down, no road found,
 /// server error). [message] is safe to show to the user.
 class RoutingException implements Exception {
@@ -93,6 +158,47 @@ class RoutingService {
       if (r != null && r.curviness > best.curviness) best = r;
     }
     return best;
+  }
+
+  /// Route each leg of [waypoints] with its own [legCurviness] level and return
+  /// the per-leg results in order. With N waypoints there are N-1 legs, so
+  /// `legCurviness.length` must equal `waypoints.length - 1`. Legs are fetched
+  /// concurrently; if any leg fails the whole call throws (a tour is only
+  /// useful end-to-end). Use [concatRouteLegs] to fuse the results into a
+  /// single [RouteResult], or keep the list to colour each leg separately.
+  Future<List<RouteResult>> routeLegs({
+    required List<LatLng> waypoints,
+    required List<Curviness> legCurviness,
+    Duration timeout = const Duration(seconds: 25),
+  }) async {
+    if (waypoints.length < 2) {
+      throw const RoutingException('Mindestens zwei Punkte nötig.');
+    }
+    if (legCurviness.length != waypoints.length - 1) {
+      throw const RoutingException('Kurvigkeit pro Abschnitt fehlt.');
+    }
+    return Future.wait([
+      for (var i = 0; i < waypoints.length - 1; i++)
+        route(
+          waypoints: [waypoints[i], waypoints[i + 1]],
+          curviness: legCurviness[i],
+          timeout: timeout,
+        ),
+    ]);
+  }
+
+  /// Convenience: [routeLegs] then [concatRouteLegs] into one [RouteResult].
+  Future<RouteResult> routePerLeg({
+    required List<LatLng> waypoints,
+    required List<Curviness> legCurviness,
+    Duration timeout = const Duration(seconds: 25),
+  }) async {
+    final legs = await routeLegs(
+      waypoints: waypoints,
+      legCurviness: legCurviness,
+      timeout: timeout,
+    );
+    return concatRouteLegs(legs);
   }
 
   Future<RouteResult> _fetchOne(

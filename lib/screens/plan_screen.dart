@@ -53,7 +53,21 @@ class _PlanScreenState extends State<PlanScreen> {
   final List<LatLng> _waypoints = [];
   Curviness _curviness = Curviness.balanced;
 
+  /// Per-leg curviness, one entry per leg (`_waypoints.length - 1`). Kept in
+  /// lock-step with [_waypoints] by every edit op below. The global slider sets
+  /// the default for new legs and acts as a "set all"; a leg can then be picked
+  /// and overridden individually.
+  final List<Curviness> _legCurviness = [];
+
   RouteResult? _route;
+
+  /// The per-leg routed lines behind [_route] (one [RouteResult] per leg), and
+  /// the curviness levels that produced them — used to colour each leg
+  /// independently. Null after loading a saved tour (only the fused geometry is
+  /// stored) until the next reroute repopulates them.
+  List<RouteResult>? _legRoutes;
+  List<Curviness>? _routedLegCurviness;
+
   bool _routing = false;
   String? _error;
   int _reqId = 0;
@@ -70,6 +84,7 @@ class _PlanScreenState extends State<PlanScreen> {
   static const double _grabRadiusPx = 40;
 
   int? _selected; // selected waypoint index (for the action chip)
+  int? _selectedLeg; // selected leg index (for the per-leg curviness editor)
   bool _didFit = false;
 
   /// Name of the saved tour currently loaded on the canvas, if any — used as
@@ -134,8 +149,13 @@ class _PlanScreenState extends State<PlanScreen> {
 
   void _addWaypoint(LatLng p) {
     setState(() {
+      // Appending a waypoint adds a new trailing leg whenever there was already
+      // at least one point. The new leg inherits the slider default.
+      final addsLeg = _waypoints.isNotEmpty;
       _waypoints.add(p);
+      if (addsLeg) _legCurviness.add(_curviness);
       _selected = _waypoints.length - 1;
+      _selectedLeg = null;
     });
     _scheduleReroute(immediate: true);
   }
@@ -152,7 +172,14 @@ class _PlanScreenState extends State<PlanScreen> {
     final insertAt = (snap?.segmentIndex ?? _waypoints.length - 2) + 1;
     setState(() {
       _waypoints.insert(insertAt, p);
+      // The via splits leg (insertAt - 1) into two; both halves inherit that
+      // leg's curviness, so the split is visually seamless.
+      if (_legCurviness.isNotEmpty) {
+        final legIdx = (insertAt - 1).clamp(0, _legCurviness.length - 1);
+        _legCurviness.insert(legIdx, _legCurviness[legIdx]);
+      }
       _selected = insertAt;
+      _selectedLeg = null;
     });
     _scheduleReroute(immediate: true);
   }
@@ -162,8 +189,19 @@ class _PlanScreenState extends State<PlanScreen> {
     if (i == null || i >= _waypoints.length) return;
     setState(() {
       _waypoints.removeAt(i);
+      // Removing waypoint i drops one adjacent leg (the start point drops its
+      // leading leg, any other point drops the leg starting at it; the kept leg
+      // keeps its curviness).
+      if (_legCurviness.isNotEmpty) {
+        _legCurviness.removeAt(i.clamp(0, _legCurviness.length - 1));
+      }
       _selected = null;
-      if (_waypoints.length < 2) _route = null;
+      _selectedLeg = null;
+      if (_waypoints.length < 2) {
+        _route = null;
+        _legRoutes = null;
+        _routedLegCurviness = null;
+      }
     });
     _scheduleReroute(immediate: true);
   }
@@ -174,7 +212,11 @@ class _PlanScreenState extends State<PlanScreen> {
     setState(() {
       final wp = _waypoints.removeAt(i);
       _waypoints.insert(0, wp);
+      // Reordering rebuilds the whole leg structure — reset per-leg choices to
+      // the slider default rather than mis-mapping them onto new segments.
+      _resetLegCurvinessToDefault();
       _selected = 0;
+      _selectedLeg = null;
     });
     _scheduleReroute(immediate: true);
   }
@@ -185,7 +227,13 @@ class _PlanScreenState extends State<PlanScreen> {
       _waypoints
         ..clear()
         ..addAll(r);
+      // Reversing the waypoints reverses the legs too.
+      final rc = _legCurviness.reversed.toList();
+      _legCurviness
+        ..clear()
+        ..addAll(rc);
       _selected = null;
+      _selectedLeg = null;
     });
     _scheduleReroute(immediate: true);
   }
@@ -193,12 +241,36 @@ class _PlanScreenState extends State<PlanScreen> {
   void _clearAll() {
     setState(() {
       _waypoints.clear();
+      _legCurviness.clear();
       _route = null;
+      _legRoutes = null;
+      _routedLegCurviness = null;
       _error = null;
       _selected = null;
+      _selectedLeg = null;
       _didFit = false;
       _loadedName = null;
     });
+  }
+
+  /// Resets [_legCurviness] to one entry per current leg, all at the slider
+  /// default [_curviness]. Used when an edit changes the leg structure wholesale.
+  void _resetLegCurvinessToDefault() {
+    final legs = _waypoints.length <= 1 ? 0 : _waypoints.length - 1;
+    _legCurviness
+      ..clear()
+      ..addAll(List.filled(legs, _curviness));
+  }
+
+  /// Per-leg curviness padded/clamped to exactly one entry per current leg,
+  /// falling back to [_curviness] for any leg not explicitly set. This is what
+  /// gets routed and saved.
+  List<Curviness> _resolvedLegCurviness() {
+    final legs = _waypoints.length <= 1 ? 0 : _waypoints.length - 1;
+    return [
+      for (var i = 0; i < legs; i++)
+        i < _legCurviness.length ? _legCurviness[i] : _curviness,
+    ];
   }
 
   /// Reset the planning canvas to a blank tour: drops the current waypoints,
@@ -263,6 +335,7 @@ class _PlanScreenState extends State<PlanScreen> {
       setState(() {
         _waypoints[i] = _dragLatLng!;
         _selected = i;
+        _selectedLeg = null;
         _dragIndex = null;
         _dragLatLng = null;
         _downPos = null;
@@ -272,6 +345,7 @@ class _PlanScreenState extends State<PlanScreen> {
       // No real movement → treat as a tap that selects / deselects the point.
       setState(() {
         _selected = _selected == i ? null : i;
+        if (_selected != null) _selectedLeg = null;
         _dragIndex = null;
         _dragLatLng = null;
         _downPos = null;
@@ -306,13 +380,20 @@ class _PlanScreenState extends State<PlanScreen> {
     try {
       final routingWps = await _routingWaypoints();
       if (!mounted || req != _reqId) return;
-      final r = await _router.route(
+      // Route every leg with its own curviness, then fuse into one line. With a
+      // single leg (or all legs equal) this still produces the same tour the
+      // old single-curviness path did, just leg-by-leg.
+      final legCurv = _resolvedLegCurviness();
+      final legs = await _router.routeLegs(
         waypoints: routingWps,
-        curviness: _curviness,
+        legCurviness: legCurv,
       );
       if (!mounted || req != _reqId) return;
+      final r = concatRouteLegs(legs);
       setState(() {
         _route = r;
+        _legRoutes = legs;
+        _routedLegCurviness = legCurv;
         _routing = false;
       });
       if (!_didFit) {
@@ -349,10 +430,34 @@ class _PlanScreenState extends State<PlanScreen> {
     ]);
   }
 
+  /// Global slider: sets the default for new legs AND applies to every existing
+  /// leg (a "make the whole tour this curvy" gesture). Per-leg overrides come
+  /// after, via [_setLegCurviness].
   void _setCurviness(Curviness c) {
-    if (c == _curviness) return;
-    setState(() => _curviness = c);
+    if (c == _curviness && _legCurviness.every((l) => l == c)) return;
+    setState(() {
+      _curviness = c;
+      for (var i = 0; i < _legCurviness.length; i++) {
+        _legCurviness[i] = c;
+      }
+    });
     _scheduleReroute(immediate: true);
+  }
+
+  /// Override a single leg's curviness, leaving the others untouched.
+  void _setLegCurviness(int leg, Curviness c) {
+    if (leg < 0 || leg >= _legCurviness.length || _legCurviness[leg] == c) {
+      return;
+    }
+    setState(() => _legCurviness[leg] = c);
+    _scheduleReroute(); // debounced
+  }
+
+  void _selectLeg(int? leg) {
+    setState(() {
+      _selectedLeg = (leg != null && leg == _selectedLeg) ? null : leg;
+      if (_selectedLeg != null) _selected = null; // one selection at a time
+    });
   }
 
   // ──────────────────────────── Search ───────────────────────────────────
@@ -512,6 +617,7 @@ class _PlanScreenState extends State<PlanScreen> {
       waypoints: List.of(_waypoints),
       geometry: route.geometry,
       curviness: _curviness,
+      legCurviness: _resolvedLegCurviness(),
       distanceM: route.distanceM,
       durationS: route.durationS,
       ascentM: route.ascentM,
@@ -557,6 +663,13 @@ class _PlanScreenState extends State<PlanScreen> {
         ..clear()
         ..addAll(pr.waypoints);
       _curviness = pr.curviness;
+      // Restore per-leg curviness (old tours with none fall back to the scalar
+      // for every leg). The chips reflect this immediately; the per-leg line
+      // colours return on the next reroute, since only the fused geometry was
+      // stored.
+      _legCurviness
+        ..clear()
+        ..addAll(pr.effectiveLegCurviness());
       _route = pr.geometry.length >= 2
           ? RouteResult(
               geometry: pr.geometry,
@@ -567,7 +680,10 @@ class _PlanScreenState extends State<PlanScreen> {
               profile: pr.curviness.profile,
             )
           : null;
+      _legRoutes = null;
+      _routedLegCurviness = null;
       _selected = null;
+      _selectedLeg = null;
       _error = null;
       _didFit = true;
     });
@@ -818,18 +934,7 @@ class _PlanScreenState extends State<PlanScreen> {
                     ),
                   ],
                 ),
-              if (hasRoute)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _route!.geometry,
-                      strokeWidth: 6,
-                      color: _curvinessColor(_curviness),
-                      borderStrokeWidth: 2,
-                      borderColor: Colors.black.withValues(alpha: 0.35),
-                    ),
-                  ],
-                ),
+              if (hasRoute) PolylineLayer(polylines: _buildRoutePolylines()),
               MarkerLayer(markers: _buildMarkers()),
             ],
           ),
@@ -918,6 +1023,10 @@ class _PlanScreenState extends State<PlanScreen> {
                   onDeselect: () => setState(() => _selected = null),
                   curviness: _curviness,
                   onCurviness: _setCurviness,
+                  legCurviness: _resolvedLegCurviness(),
+                  selectedLeg: _selectedLeg,
+                  onSelectLeg: _selectLeg,
+                  onLegCurviness: _setLegCurviness,
                   route: _route,
                   routing: _routing,
                   onSave: hasRoute ? _save : null,
@@ -931,6 +1040,38 @@ class _PlanScreenState extends State<PlanScreen> {
         ],
       ),
     );
+  }
+
+  /// The routed line, drawn one polyline per leg so each can carry its own
+  /// curviness colour. Adjacent legs share an endpoint, so the segments join
+  /// seamlessly. Falls back to a single line when only the fused geometry is
+  /// available (e.g. right after loading a saved tour, before any reroute).
+  List<Polyline> _buildRoutePolylines() {
+    final legs = _legRoutes;
+    final colors = _routedLegCurviness;
+    if (legs == null || colors == null || legs.length != colors.length) {
+      return [
+        Polyline(
+          points: _route!.geometry,
+          strokeWidth: 6,
+          color: _curvinessColor(_curviness),
+          borderStrokeWidth: 2,
+          borderColor: Colors.black.withValues(alpha: 0.35),
+        ),
+      ];
+    }
+    return [
+      for (var i = 0; i < legs.length; i++)
+        Polyline(
+          points: legs[i].geometry,
+          strokeWidth: _selectedLeg == i ? 9 : 6,
+          color: _curvinessColor(colors[i]),
+          borderStrokeWidth: _selectedLeg == i ? 3 : 2,
+          borderColor: _selectedLeg == i
+              ? Colors.white.withValues(alpha: 0.95)
+              : Colors.black.withValues(alpha: 0.35),
+        ),
+    ];
   }
 
   List<Marker> _buildMarkers() {
@@ -1207,6 +1348,10 @@ class _BottomPanel extends StatelessWidget {
     required this.onDeselect,
     required this.curviness,
     required this.onCurviness,
+    required this.legCurviness,
+    required this.selectedLeg,
+    required this.onSelectLeg,
+    required this.onLegCurviness,
     required this.route,
     required this.routing,
     required this.onSave,
@@ -1223,6 +1368,10 @@ class _BottomPanel extends StatelessWidget {
   final VoidCallback onDeselect;
   final Curviness curviness;
   final ValueChanged<Curviness> onCurviness;
+  final List<Curviness> legCurviness;
+  final int? selectedLeg;
+  final ValueChanged<int?> onSelectLeg;
+  final void Function(int leg, Curviness curviness) onLegCurviness;
   final RouteResult? route;
   final bool routing;
   final VoidCallback? onSave;
@@ -1297,6 +1446,18 @@ class _BottomPanel extends StatelessWidget {
             ),
           ),
 
+          // Per-leg curviness — only useful with 2+ legs (3+ waypoints); a
+          // single leg is fully covered by the slider above.
+          if (legCurviness.length >= 2) ...[
+            const SizedBox(height: 6),
+            _LegCurvinessSelector(
+              legCurviness: legCurviness,
+              selectedLeg: selectedLeg,
+              onSelectLeg: onSelectLeg,
+              onLegCurviness: onLegCurviness,
+            ),
+          ],
+
           if (route != null) ...[
             const SizedBox(height: 2),
             _SummaryRow(route: route!),
@@ -1336,6 +1497,195 @@ class _BottomPanel extends StatelessWidget {
                 style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Per-leg curviness editor: a scrollable strip of leg chips (each coloured by
+/// its current curviness) plus, when a leg is picked, a row of level choices
+/// for it.
+class _LegCurvinessSelector extends StatelessWidget {
+  const _LegCurvinessSelector({
+    required this.legCurviness,
+    required this.selectedLeg,
+    required this.onSelectLeg,
+    required this.onLegCurviness,
+  });
+
+  final List<Curviness> legCurviness;
+  final int? selectedLeg;
+  final ValueChanged<int?> onSelectLeg;
+  final void Function(int leg, Curviness curviness) onLegCurviness;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.timeline_rounded, size: 18, color: AppColors.accent),
+            const SizedBox(width: 8),
+            const Text('Abschnitte',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700, color: AppColors.text)),
+            const Spacer(),
+            Text(
+              selectedLeg == null
+                  ? 'Abschnitt antippen'
+                  : 'Abschnitt ${selectedLeg! + 1}',
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var i = 0; i < legCurviness.length; i++)
+                Padding(
+                  padding: EdgeInsets.only(
+                      right: i == legCurviness.length - 1 ? 0 : 8),
+                  child: _LegChip(
+                    index: i,
+                    curviness: legCurviness[i],
+                    selected: selectedLeg == i,
+                    onTap: () => onSelectLeg(i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (selectedLeg != null && selectedLeg! < legCurviness.length) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceHi,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Abschnitt ${selectedLeg! + 1} — Kurvigkeit',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                        fontSize: 13)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in Curviness.values)
+                      _ChoiceChip(
+                        label: c.label,
+                        color: _curvinessColor(c),
+                        selected: c == legCurviness[selectedLeg!],
+                        onTap: () => onLegCurviness(selectedLeg!, c),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// A single leg chip: a colour dot (the leg's curviness) + its 1-based number.
+class _LegChip extends StatelessWidget {
+  const _LegChip({
+    required this.index,
+    required this.curviness,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int index;
+  final Curviness curviness;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _curvinessColor(curviness);
+    return Material(
+      color: selected ? color.withValues(alpha: 0.25) : AppColors.surfaceHi,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? color : AppColors.gridLine,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 8),
+              Text('${index + 1}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, color: AppColors.text)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A pill for picking one curviness level (used by the per-leg editor).
+class _ChoiceChip extends StatelessWidget {
+  const _ChoiceChip({
+    required this.label,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? color.withValues(alpha: 0.22) : AppColors.surface,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected ? color : AppColors.gridLine,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: selected ? AppColors.text : AppColors.textMuted,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12)),
+        ),
       ),
     );
   }
