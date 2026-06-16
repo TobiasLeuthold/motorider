@@ -473,6 +473,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 ],
               ),
               MarkerLayer(
+                // Counter-rotate markers against the heading-up map so they stay
+                // screen-upright. Without this, flutter_map rotates each marker
+                // *with* the map canvas, double-applying the rotation to the
+                // puck (its angle already bakes in [_mapRotation]) — which left
+                // the navigation arrow pointing at geographic north instead of
+                // the direction of travel. It also keeps the destination flag
+                // upright rather than tilting as the map turns.
+                rotate: true,
                 markers: [
                   // Destination flag.
                   Marker(
