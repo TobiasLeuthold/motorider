@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../models/fillup.dart';
 import '../stats/stats_calculator.dart';
 import '../theme.dart';
+import 'seg_toggle.dart';
 
 /// Overview-tab section that breaks riding distance and fuel spend down by
 /// calendar period. The user picks the granularity (week / month / year) and
@@ -78,7 +79,7 @@ class _PeriodBreakdownState extends State<PeriodBreakdown> {
             style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
           ),
           const SizedBox(height: 14),
-          _SegToggle<PeriodGranularity>(
+          SegToggle<PeriodGranularity>(
             value: _granularity,
             options: const [
               (PeriodGranularity.week, 'Woche'),
@@ -88,7 +89,7 @@ class _PeriodBreakdownState extends State<PeriodBreakdown> {
             onChanged: (g) => setState(() => _granularity = g),
           ),
           const SizedBox(height: 8),
-          _SegToggle<_Metric>(
+          SegToggle<_Metric>(
             value: _metric,
             options: const [
               (_Metric.km, 'Kilometer'),
@@ -325,58 +326,5 @@ class _PeriodBreakdownState extends State<PeriodBreakdown> {
       case PeriodGranularity.year:
         return DateFormat('yyyy').format(s.start);
     }
-  }
-}
-
-/// Compact pill-style segmented toggle matching the app's dark theme.
-class _SegToggle<T> extends StatelessWidget {
-  const _SegToggle({
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  final T value;
-  final List<(T, String)> options;
-  final ValueChanged<T> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.bg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.gridLine.withValues(alpha: 0.8)),
-      ),
-      child: Row(
-        children: [
-          for (final (key, label) in options)
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => onChanged(key),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: key == value ? AppColors.accent : Colors.transparent,
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child: Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: key == value ? Colors.black : AppColors.textMuted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }
