@@ -81,11 +81,18 @@ class _PlanScreenState extends State<PlanScreen> {
   LatLng? _dragLatLng;
   Offset? _downPos;
   bool _moved = false;
+  // A waypoint only becomes draggable once it is already selected: the first
+  // touch selects it, a second touch-and-drag moves it. This stops accidental
+  // drags while placing/zooming and makes precise planning much easier.
+  bool _dragArmed = false;
   static const double _grabRadiusPx = 40;
 
   int? _selected; // selected waypoint index (for the action chip)
   int? _selectedLeg; // selected leg index (for the per-leg curviness editor)
   bool _didFit = false;
+
+  /// Whether the bottom planning panel is folded away to reveal more of the map.
+  bool _panelCollapsed = false;
 
   /// Name of the saved tour currently loaded on the canvas, if any — used as
   /// the default file name when exporting the on-screen route to GPX.
@@ -304,6 +311,9 @@ class _PlanScreenState extends State<PlanScreen> {
     if (i == null) return; // let the map handle pans / taps on empty space
     setState(() {
       _dragIndex = i;
+      // Only an already-selected point may be dragged; touching an unselected
+      // one just selects it (handled on pointer-up) without moving it.
+      _dragArmed = _selected == i;
       _dragLatLng = _waypoints[i];
       _downPos = e.localPosition;
       _moved = false;
@@ -314,6 +324,7 @@ class _PlanScreenState extends State<PlanScreen> {
     if (_dragIndex == null) return;
     final from = _downPos;
     if (from != null && (e.localPosition - from).distance > 6) _moved = true;
+    if (!_dragArmed) return; // not yet selected → don't move the pin
     final cam = _controller.camera;
     setState(() => _dragLatLng = cam.pointToLatLng(
         math.Point<double>(e.localPosition.dx, e.localPosition.dy)));
@@ -323,6 +334,7 @@ class _PlanScreenState extends State<PlanScreen> {
     if (_dragIndex == null) return;
     setState(() {
       _dragIndex = null;
+      _dragArmed = false;
       _dragLatLng = null;
       _downPos = null;
     });
@@ -331,22 +343,26 @@ class _PlanScreenState extends State<PlanScreen> {
   void _onPointerUp(PointerUpEvent e) {
     final i = _dragIndex;
     if (i == null) return;
-    if (_moved && _dragLatLng != null) {
+    if (_dragArmed && _moved && _dragLatLng != null) {
+      // Moving an already-selected point: commit its new position.
       setState(() {
         _waypoints[i] = _dragLatLng!;
         _selected = i;
         _selectedLeg = null;
         _dragIndex = null;
+        _dragArmed = false;
         _dragLatLng = null;
         _downPos = null;
       });
       _scheduleReroute(immediate: true);
     } else {
-      // No real movement → treat as a tap that selects / deselects the point.
+      // First touch (or a stationary tap): select the point so it can then be
+      // dragged; tapping an already-selected point deselects it.
       setState(() {
         _selected = _selected == i ? null : i;
         if (_selected != null) _selectedLeg = null;
         _dragIndex = null;
+        _dragArmed = false;
         _dragLatLng = null;
         _downPos = null;
       });
@@ -986,10 +1002,13 @@ class _PlanScreenState extends State<PlanScreen> {
               ),
             ),
 
-          // Right-side map controls.
+          // Right-side map controls. When the panel is folded away the controls
+          // drop down to sit just above the slim collapsed bar.
           Positioned(
             right: 16,
-            bottom: hasRoute || _waypoints.isNotEmpty ? 268 : 120,
+            bottom: _panelCollapsed
+                ? 96
+                : (hasRoute || _waypoints.isNotEmpty ? 268 : 120),
             child: Column(
               children: [
                 _MapBtn(icon: Icons.add_rounded, onTap: () => _zoom(1)),
@@ -1015,6 +1034,9 @@ class _PlanScreenState extends State<PlanScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: _BottomPanel(
+                  collapsed: _panelCollapsed,
+                  onToggleCollapsed: () =>
+                      setState(() => _panelCollapsed = !_panelCollapsed),
                   waypointCount: _waypoints.length,
                   selectedIndex: _selected,
                   selectedIsStart: _selected == 0,
@@ -1099,7 +1121,9 @@ class _PlanScreenState extends State<PlanScreen> {
           isStart: isStart,
           isEnd: isEnd,
           selected: selected,
-          dragging: _dragIndex == i,
+          // Only show the enlarged "grabbed" state when the point is actually
+          // movable (already selected), not for a first selecting touch.
+          dragging: _dragIndex == i && _dragArmed,
         ),
       ));
     }
@@ -1340,6 +1364,8 @@ class _ErrorBanner extends StatelessWidget {
 
 class _BottomPanel extends StatelessWidget {
   const _BottomPanel({
+    required this.collapsed,
+    required this.onToggleCollapsed,
     required this.waypointCount,
     required this.selectedIndex,
     required this.selectedIsStart,
@@ -1360,6 +1386,8 @@ class _BottomPanel extends StatelessWidget {
     required this.onExport,
   });
 
+  final bool collapsed;
+  final VoidCallback onToggleCollapsed;
   final int waypointCount;
   final int? selectedIndex;
   final bool selectedIsStart;
@@ -1392,6 +1420,57 @@ class _BottomPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Fold handle — tap to hide/show the planning controls and free up
+          // the map. When folded the bar shrinks to this summary line.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onToggleCollapsed,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.gridLine,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Icon(
+                      collapsed
+                          ? (route != null
+                              ? Icons.alt_route_rounded
+                              : Icons.touch_app_rounded)
+                          : Icons.tune_rounded,
+                      size: 18,
+                      color: AppColors.accent,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _handleLabel(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: AppColors.text, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    Icon(
+                      collapsed
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: AppColors.textMuted,
+                    ),
+                  ],
+                ),
+                if (!collapsed) const SizedBox(height: 8),
+              ],
+            ),
+          ),
+          if (!collapsed) ...[
           if (waypointCount == 0)
             const _Hint(
               icon: Icons.touch_app_rounded,
@@ -1496,9 +1575,23 @@ class _BottomPanel extends StatelessWidget {
             const Text('Route wird berechnet …',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
           ],
+          ], // end if (!collapsed)
         ],
       ),
     );
+  }
+
+  /// One-line summary shown on the fold handle. Folded: the route's distance and
+  /// time (or a planning hint); expanded: a plain "collapse" affordance.
+  String _handleLabel() {
+    if (!collapsed) return 'Einklappen';
+    final r = route;
+    if (r != null) {
+      return '${r.distanceKm.toStringAsFixed(1)} km · ${_fmtDuration(r.duration)}';
+    }
+    if (routing && waypointCount >= 2) return 'Route wird berechnet …';
+    if (waypointCount == 0) return 'Tour planen';
+    return 'Punkte setzen';
   }
 }
 

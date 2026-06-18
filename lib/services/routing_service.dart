@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -127,6 +128,15 @@ class RoutingService {
   final bool _ownsClient;
   final String baseUrl;
 
+  /// Caps how many requests hit the public BRouter server at once. Per-leg
+  /// routing with alternatives can otherwise fan out into a dozen simultaneous
+  /// requests, which the free server's frontend answers with HTTP 400/429.
+  /// Three in-flight keeps us fast without bursting it.
+  final _gate = _RequestGate(3);
+
+  /// Total tries per request before giving up (1 initial + 2 retries).
+  static const _maxAttempts = 3;
+
   /// Route through [waypoints] (at least 2) at the given [curviness].
   Future<RouteResult> route({
     required List<LatLng> waypoints,
@@ -206,23 +216,61 @@ class RoutingService {
     String profile,
     int altIdx,
     Duration timeout,
-  ) async {
+  ) {
     final uri = Uri.parse(
       '$baseUrl?lonlats=$lonlats&profile=$profile'
       '&alternativeidx=$altIdx&format=geojson&timode=2', // timode=2 → voicehints
     );
-    http.Response res;
-    try {
-      res = await _client.get(uri).timeout(timeout);
-    } catch (e) {
-      throw RoutingException('Routing nicht erreichbar ($e).');
-    }
-    if (res.statusCode != 200) {
+    // Run through the gate so concurrent legs/alternatives don't burst the
+    // server, and retry transient frontend errors (the 400/429/5xx it returns
+    // under load) with a short backoff before surfacing an error to the rider.
+    return _gate.run(() => _fetchWithRetry(uri, profile, timeout));
+  }
+
+  Future<RouteResult> _fetchWithRetry(
+    Uri uri,
+    String profile,
+    Duration timeout,
+  ) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= _maxAttempts; attempt++) {
+      http.Response res;
+      try {
+        res = await _client.get(uri).timeout(timeout);
+      } on TimeoutException {
+        // A genuine timeout is slow; don't stack more of them.
+        throw const RoutingException(
+            'Routing dauerte zu lange — versuch es nochmal.');
+      } catch (e) {
+        // Fast network hiccup (reset/DNS) — worth one more try.
+        lastError = e;
+        if (attempt < _maxAttempts) {
+          await _backoff(attempt);
+          continue;
+        }
+        throw RoutingException('Routing nicht erreichbar ($e).');
+      }
+
+      if (res.statusCode == 200) return _handleBody(res, profile);
+
+      // The free BRouter frontend rejects bursts with 400/429/5xx; these clear
+      // on a retry once the gate has drained. Genuinely bad requests don't
+      // happen here (coordinates are always well-formed), so retrying is safe.
+      if (_retryable(res.statusCode) && attempt < _maxAttempts) {
+        lastError = res.statusCode;
+        await _backoff(attempt);
+        continue;
+      }
       throw RoutingException('Routing-Server: HTTP ${res.statusCode}.');
     }
+    throw RoutingException('Routing fehlgeschlagen ($lastError).');
+  }
+
+  RouteResult _handleBody(http.Response res, String profile) {
     final body = res.body.trimLeft();
-    // BRouter signals errors as a plain-text body (still HTTP 200), e.g.
-    // "operation killed" or "..no track found..".
+    // BRouter signals routing errors as a plain-text body (still HTTP 200), e.g.
+    // "operation killed" or "..no track found..". These are permanent for the
+    // given points, so they are not retried.
     if (!body.startsWith('{')) {
       final msg = res.body.trim();
       throw RoutingException(
@@ -231,6 +279,19 @@ class RoutingService {
     }
     return _parse(body, profile);
   }
+
+  static bool _retryable(int status) =>
+      status == 400 ||
+      status == 408 ||
+      status == 429 ||
+      status == 500 ||
+      status == 502 ||
+      status == 503 ||
+      status == 504;
+
+  /// Increasing backoff between attempts: ~400 ms, then ~900 ms.
+  static Future<void> _backoff(int attempt) =>
+      Future<void>.delayed(Duration(milliseconds: 100 + 300 * attempt * attempt));
 
   static String _humanize(String brouterError) {
     final e = brouterError.toLowerCase();
@@ -294,5 +355,30 @@ class RoutingService {
 
   void dispose() {
     if (_ownsClient) _client.close();
+  }
+}
+
+/// A tiny async semaphore: at most [maxConcurrent] tasks run at once, the rest
+/// queue FIFO. Keeps the routing fan-out from overwhelming the free server.
+class _RequestGate {
+  _RequestGate(this.maxConcurrent);
+  final int maxConcurrent;
+
+  int _active = 0;
+  final _waiting = <Completer<void>>[];
+
+  Future<T> run<T>(Future<T> Function() task) async {
+    if (_active >= maxConcurrent) {
+      final c = Completer<void>();
+      _waiting.add(c);
+      await c.future;
+    }
+    _active++;
+    try {
+      return await task();
+    } finally {
+      _active--;
+      if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
+    }
   }
 }
