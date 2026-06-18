@@ -98,6 +98,10 @@ class _PlanScreenState extends State<PlanScreen> {
   /// the default file name when exporting the on-screen route to GPX.
   String? _loadedName;
 
+  /// Id of the saved tour currently loaded on the canvas, if any. Lets the
+  /// "delete tour" action remove it from storage, not just clear the canvas.
+  String? _loadedId;
+
   LatLng? _userPos;
   bool _locating = false;
 
@@ -257,6 +261,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selectedLeg = null;
       _didFit = false;
       _loadedName = null;
+      _loadedId = null;
     });
   }
 
@@ -646,6 +651,47 @@ class _PlanScreenState extends State<PlanScreen> {
     );
   }
 
+  /// Ditch the whole tour on the canvas after confirming. If it was loaded from
+  /// a saved tour, it's removed from storage too — otherwise it's just cleared.
+  Future<void> _deleteTour() async {
+    if (_waypoints.isEmpty && _route == null) return;
+    final name = _loadedName;
+    final saved = _loadedId != null;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Tour löschen?'),
+        content: Text(
+          saved
+              ? 'Möchtest du „${name ?? 'diese Tour'}" wirklich löschen? '
+                  'Das kann nicht rückgängig gemacht werden.'
+              : 'Möchtest du diese Tour wirklich verwerfen?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final id = _loadedId;
+    if (id != null) await routeRepo.delete(id);
+    if (!mounted) return;
+    _newTour(); // clears the canvas + search; resets _loadedName/_loadedId
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved ? '„${name ?? 'Tour'}" gelöscht' : 'Tour verworfen'),
+      ),
+    );
+  }
+
   Future<String?> _promptName(String initial) {
     final ctrl = TextEditingController(text: initial);
     return showDialog<String>(
@@ -675,6 +721,7 @@ class _PlanScreenState extends State<PlanScreen> {
   void _loadRoute(PlannedRoute pr) {
     setState(() {
       _loadedName = pr.name;
+      _loadedId = pr.id;
       _waypoints
         ..clear()
         ..addAll(pr.waypoints);
@@ -1055,6 +1102,8 @@ class _PlanScreenState extends State<PlanScreen> {
                   onNavigate: hasRoute ? _navigate : null,
                   onOffline: hasRoute ? _downloadOffline : null,
                   onExport: hasRoute ? _exportCurrent : null,
+                  onDelete:
+                      _waypoints.isNotEmpty || hasRoute ? _deleteTour : null,
                 ),
               ),
             ),
@@ -1384,6 +1433,7 @@ class _BottomPanel extends StatelessWidget {
     required this.onNavigate,
     required this.onOffline,
     required this.onExport,
+    required this.onDelete,
   });
 
   final bool collapsed;
@@ -1406,6 +1456,7 @@ class _BottomPanel extends StatelessWidget {
   final VoidCallback? onNavigate;
   final VoidCallback? onOffline;
   final VoidCallback? onExport;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1574,6 +1625,25 @@ class _BottomPanel extends StatelessWidget {
             const SizedBox(height: 4),
             const Text('Route wird berechnet …',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          ],
+
+          // Ditch the whole tour (with confirmation). Available whenever there's
+          // anything on the canvas — a finished route or just dropped points.
+          if (onDelete != null) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: const Text('Tour löschen'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
           ],
           ], // end if (!collapsed)
         ],
