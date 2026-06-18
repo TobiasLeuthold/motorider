@@ -94,6 +94,16 @@ class _PlanScreenState extends State<PlanScreen> {
   /// Whether the bottom planning panel is folded away to reveal more of the map.
   bool _panelCollapsed = false;
 
+  /// Add-point mode. Tapping the map only drops a waypoint while this is on, so
+  /// stray taps no longer create points by accident. Long-press (insert via)
+  /// is gated the same way.
+  bool _addMode = false;
+
+  /// True when the route on screen no longer matches the current waypoints or
+  /// curviness (an edit happened). Routing is manual, so this drives the
+  /// "Route berechnen" button instead of an automatic reroute.
+  bool _routeDirty = false;
+
   /// Name of the saved tour currently loaded on the canvas, if any — used as
   /// the default file name when exporting the on-screen route to GPX.
   String? _loadedName;
@@ -168,7 +178,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selected = _waypoints.length - 1;
       _selectedLeg = null;
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   /// Long-press: insert a via at the leg of the existing route nearest to [p],
@@ -192,7 +202,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selected = insertAt;
       _selectedLeg = null;
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   void _deleteSelected() {
@@ -214,7 +224,7 @@ class _PlanScreenState extends State<PlanScreen> {
         _routedLegCurviness = null;
       }
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   void _makeSelectedStart() {
@@ -229,7 +239,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selected = 0;
       _selectedLeg = null;
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   void _reverse() {
@@ -246,7 +256,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selected = null;
       _selectedLeg = null;
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   void _clearAll() {
@@ -262,6 +272,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _didFit = false;
       _loadedName = null;
       _loadedId = null;
+      _routeDirty = false;
     });
   }
 
@@ -359,7 +370,7 @@ class _PlanScreenState extends State<PlanScreen> {
         _dragLatLng = null;
         _downPos = null;
       });
-      _scheduleReroute(immediate: true);
+      _markRouteStale();
     } else {
       // First touch (or a stationary tap): select the point so it can then be
       // dragged; tapping an already-selected point deselects it.
@@ -376,21 +387,27 @@ class _PlanScreenState extends State<PlanScreen> {
 
   // ──────────────────────────── Routing ──────────────────────────────────
 
-  void _scheduleReroute({bool immediate = false}) {
+  /// An edit happened: mark the route stale instead of auto-routing. Routing is
+  /// manual now (the rider taps "Route berechnen"), which avoids hammering the
+  /// public routing API on every little change. Dropping below two waypoints
+  /// clears the route outright.
+  void _markRouteStale() {
     _rerouteTimer?.cancel();
     if (_waypoints.length < 2) {
       setState(() {
         _route = null;
+        _legRoutes = null;
+        _routedLegCurviness = null;
+        _routeDirty = false;
         _error = null;
       });
       return;
     }
-    _rerouteTimer = Timer(
-      Duration(milliseconds: immediate ? 60 : 350),
-      _reroute,
-    );
+    setState(() => _routeDirty = true);
   }
 
+  /// Compute the route for the current waypoints/curviness — triggered only by
+  /// the "Route berechnen" button now, never automatically.
   Future<void> _reroute() async {
     if (_waypoints.length < 2) return;
     final req = ++_reqId;
@@ -416,6 +433,7 @@ class _PlanScreenState extends State<PlanScreen> {
         _legRoutes = legs;
         _routedLegCurviness = legCurv;
         _routing = false;
+        _routeDirty = false;
       });
       if (!_didFit) {
         _didFit = true;
@@ -462,7 +480,7 @@ class _PlanScreenState extends State<PlanScreen> {
         _legCurviness[i] = c;
       }
     });
-    _scheduleReroute(immediate: true);
+    _markRouteStale();
   }
 
   /// Override a single leg's curviness, leaving the others untouched.
@@ -471,7 +489,7 @@ class _PlanScreenState extends State<PlanScreen> {
       return;
     }
     setState(() => _legCurviness[leg] = c);
-    _scheduleReroute(); // debounced
+    _markRouteStale();
   }
 
   void _selectLeg(int? leg) {
@@ -749,6 +767,7 @@ class _PlanScreenState extends State<PlanScreen> {
       _selectedLeg = null;
       _error = null;
       _didFit = true;
+      _routeDirty = false; // loaded route matches its waypoints
     });
     if (pr.geometry.isNotEmpty) _fit(pr.geometry);
   }
@@ -962,12 +981,17 @@ class _PlanScreenState extends State<PlanScreen> {
               minZoom: 3,
               maxZoom: 18,
               onTap: (_, p) {
+                // Points are only added while add-mode is on, so a stray tap
+                // can't create a waypoint by accident.
+                if (!_addMode) return;
                 if (_searchResults.isNotEmpty || _searchCtrl.text.isNotEmpty) {
                   _clearSearch();
                 }
                 _addWaypoint(p);
               },
-              onLongPress: (_, p) => _insertVia(p),
+              onLongPress: (_, p) {
+                if (_addMode) _insertVia(p);
+              },
               // While dragging a waypoint, map panning is off so the gesture
               // can't be hijacked into a map pan.
               interactionOptions: InteractionOptions(
@@ -1058,6 +1082,19 @@ class _PlanScreenState extends State<PlanScreen> {
                 : (hasRoute || _waypoints.isNotEmpty ? 268 : 120),
             child: Column(
               children: [
+                // Toggle add-point mode. Highlighted while active; only then
+                // does tapping the map drop a waypoint.
+                _MapBtn(
+                  icon: _addMode
+                      ? Icons.wrong_location_rounded
+                      : Icons.add_location_alt_rounded,
+                  tooltip: _addMode
+                      ? 'Punkte-Modus aus'
+                      : 'Punkte hinzufügen',
+                  active: _addMode,
+                  onTap: () => setState(() => _addMode = !_addMode),
+                ),
+                const SizedBox(height: 8),
                 _MapBtn(icon: Icons.add_rounded, onTap: () => _zoom(1)),
                 const SizedBox(height: 8),
                 _MapBtn(icon: Icons.remove_rounded, onTap: () => _zoom(-1)),
@@ -1084,6 +1121,7 @@ class _PlanScreenState extends State<PlanScreen> {
                   collapsed: _panelCollapsed,
                   onToggleCollapsed: () =>
                       setState(() => _panelCollapsed = !_panelCollapsed),
+                  addMode: _addMode,
                   waypointCount: _waypoints.length,
                   selectedIndex: _selected,
                   selectedIsStart: _selected == 0,
@@ -1098,6 +1136,8 @@ class _PlanScreenState extends State<PlanScreen> {
                   onLegCurviness: _setLegCurviness,
                   route: _route,
                   routing: _routing,
+                  routeDirty: _routeDirty,
+                  onCompute: _waypoints.length >= 2 && !_routing ? _reroute : null,
                   onSave: hasRoute ? _save : null,
                   onNavigate: hasRoute ? _navigate : null,
                   onOffline: hasRoute ? _downloadOffline : null,
@@ -1415,6 +1455,7 @@ class _BottomPanel extends StatelessWidget {
   const _BottomPanel({
     required this.collapsed,
     required this.onToggleCollapsed,
+    required this.addMode,
     required this.waypointCount,
     required this.selectedIndex,
     required this.selectedIsStart,
@@ -1429,6 +1470,8 @@ class _BottomPanel extends StatelessWidget {
     required this.onLegCurviness,
     required this.route,
     required this.routing,
+    required this.routeDirty,
+    required this.onCompute,
     required this.onSave,
     required this.onNavigate,
     required this.onOffline,
@@ -1438,6 +1481,7 @@ class _BottomPanel extends StatelessWidget {
 
   final bool collapsed;
   final VoidCallback onToggleCollapsed;
+  final bool addMode;
   final int waypointCount;
   final int? selectedIndex;
   final bool selectedIsStart;
@@ -1452,6 +1496,8 @@ class _BottomPanel extends StatelessWidget {
   final void Function(int leg, Curviness curviness) onLegCurviness;
   final RouteResult? route;
   final bool routing;
+  final bool routeDirty;
+  final VoidCallback? onCompute;
   final VoidCallback? onSave;
   final VoidCallback? onNavigate;
   final VoidCallback? onOffline;
@@ -1523,10 +1569,15 @@ class _BottomPanel extends StatelessWidget {
           ),
           if (!collapsed) ...[
           if (waypointCount == 0)
-            const _Hint(
-              icon: Icons.touch_app_rounded,
-              text: 'Tippe auf die Karte, um Start und Ziel zu setzen. '
-                  'Langes Drücken biegt die Route über einen Punkt.',
+            _Hint(
+              icon: addMode
+                  ? Icons.touch_app_rounded
+                  : Icons.add_location_alt_rounded,
+              text: addMode
+                  ? 'Tippe auf die Karte, um Start und Ziel zu setzen. '
+                      'Langes Drücken biegt die Route über einen Punkt.'
+                  : 'Aktiviere den Punkte-Modus (➕ rechts an der Karte) und '
+                      'tippe dann, um Start und Ziel zu setzen.',
             )
           else if (selectedIndex != null) ...[
             _SelectionRow(
@@ -1538,10 +1589,12 @@ class _BottomPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
           ] else if (waypointCount == 1)
-            const _Hint(
+            _Hint(
               icon: Icons.add_location_alt_rounded,
-              text: 'Tippe das Ziel — danach kannst du Punkte ziehen oder die '
-                  'Kurvigkeit wählen.',
+              text: addMode
+                  ? 'Tippe das Ziel. Punkte verschiebst du, indem du sie zuerst '
+                      'antippst und dann ziehst.'
+                  : 'Aktiviere den Punkte-Modus und tippe das Ziel.',
             ),
 
           // Curviness selector.
@@ -1588,43 +1641,80 @@ class _BottomPanel extends StatelessWidget {
             ),
           ],
 
+          // Route summary — shown whenever a route exists, even after an edit
+          // makes it stale (then it reads as a preview to recompute).
           if (route != null) ...[
             const SizedBox(height: 2),
             _SummaryRow(route: route!),
+          ],
+
+          if (waypointCount >= 2) ...[
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onNavigate,
-                    icon: const Icon(Icons.navigation_rounded, size: 18),
-                    label: const Text('Navigieren'),
+            if (routing)
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.accent),
                   ),
+                  const SizedBox(width: 10),
+                  const Text('Route wird berechnet …',
+                      style:
+                          TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ],
+              )
+            else if (route != null && !routeDirty)
+              // Fresh route → the navigate / save / offline / export actions.
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: onNavigate,
+                      icon: const Icon(Icons.navigation_rounded, size: 18),
+                      label: const Text('Navigieren'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  _SquareAction(
+                    icon: Icons.save_outlined,
+                    tooltip: 'Speichern',
+                    onTap: onSave,
+                  ),
+                  const SizedBox(width: 8),
+                  _SquareAction(
+                    icon: Icons.download_for_offline_outlined,
+                    tooltip: 'Offline-Karte',
+                    onTap: onOffline,
+                  ),
+                  const SizedBox(width: 8),
+                  _SquareAction(
+                    icon: Icons.ios_share_rounded,
+                    tooltip: 'GPX exportieren',
+                    onTap: onExport,
+                  ),
+                ],
+              )
+            else ...[
+              // No route yet, or it's stale → the manual compute button.
+              if (route != null && routeDirty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text('Route veraltet — neu berechnen.',
+                      style:
+                          TextStyle(color: AppColors.accentSoft, fontSize: 12)),
                 ),
-                const SizedBox(width: 10),
-                _SquareAction(
-                  icon: Icons.save_outlined,
-                  tooltip: 'Speichern',
-                  onTap: onSave,
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: onCompute,
+                  icon: const Icon(Icons.alt_route_rounded, size: 18),
+                  label: Text(
+                      route == null ? 'Route berechnen' : 'Route neu berechnen'),
                 ),
-                const SizedBox(width: 8),
-                _SquareAction(
-                  icon: Icons.download_for_offline_outlined,
-                  tooltip: 'Offline-Karte',
-                  onTap: onOffline,
-                ),
-                const SizedBox(width: 8),
-                _SquareAction(
-                  icon: Icons.ios_share_rounded,
-                  tooltip: 'GPX exportieren',
-                  onTap: onExport,
-                ),
-              ],
-            ),
-          ] else if (waypointCount >= 2 && routing) ...[
-            const SizedBox(height: 4),
-            const Text('Route wird berechnet …',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              ),
+            ],
           ],
 
           // Ditch the whole tour (with confirmation). Available whenever there's
@@ -1660,6 +1750,7 @@ class _BottomPanel extends StatelessWidget {
       return '${r.distanceKm.toStringAsFixed(1)} km · ${_fmtDuration(r.duration)}';
     }
     if (routing && waypointCount >= 2) return 'Route wird berechnet …';
+    if (waypointCount >= 2) return 'Route berechnen';
     if (waypointCount == 0) return 'Tour planen';
     return 'Punkte setzen';
   }
@@ -2037,15 +2128,25 @@ class _Hint extends StatelessWidget {
 }
 
 class _MapBtn extends StatelessWidget {
-  const _MapBtn({required this.icon, this.onTap, this.busy = false});
+  const _MapBtn({
+    required this.icon,
+    this.onTap,
+    this.busy = false,
+    this.active = false,
+    this.tooltip,
+  });
   final IconData icon;
   final VoidCallback? onTap;
   final bool busy;
+  final bool active;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface.withValues(alpha: 0.95),
+    final btn = Material(
+      color: active
+          ? AppColors.accent
+          : AppColors.surface.withValues(alpha: 0.95),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -2055,7 +2156,8 @@ class _MapBtn extends StatelessWidget {
           height: 44,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.gridLine),
+            border: Border.all(
+                color: active ? AppColors.accent : AppColors.gridLine),
           ),
           child: busy
               ? const Padding(
@@ -2063,10 +2165,11 @@ class _MapBtn extends StatelessWidget {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: AppColors.accent),
                 )
-              : Icon(icon, color: AppColors.text),
+              : Icon(icon, color: active ? Colors.black : AppColors.text),
         ),
       ),
     );
+    return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
   }
 }
 
