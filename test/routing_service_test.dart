@@ -280,4 +280,65 @@ void main() {
       throwsA(isA<RoutingException>()),
     );
   });
+
+  test('retries a transient HTTP 400 and then succeeds', () async {
+    var calls = 0;
+    final client = MockClient((req) async {
+      calls++;
+      if (calls == 1) return http.Response('busy', 400); // transient frontend
+      return http.Response(
+        geojson(
+          lonLatElev: const [
+            [8.0, 46.0, 500],
+            [8.0, 46.02, 520],
+          ],
+          trackLength: 1500,
+          totalTime: 120,
+          ascend: 10,
+        ),
+        200,
+      );
+    });
+    final svc = RoutingService(client: client);
+    final r = await svc.route(
+      waypoints: const [LatLng(46.0, 8.0), LatLng(46.02, 8.0)],
+      curviness: Curviness.fast, // a single request → easy to count retries
+    );
+    expect(calls, 2); // one retry
+    expect(r.distanceM, 1500);
+  });
+
+  test('surfaces a RoutingException after exhausting retries', () async {
+    var calls = 0;
+    final client = MockClient((req) async {
+      calls++;
+      return http.Response('still busy', 429);
+    });
+    final svc = RoutingService(client: client);
+    await expectLater(
+      svc.route(
+        waypoints: const [LatLng(46.0, 8.0), LatLng(46.1, 8.0)],
+        curviness: Curviness.fast,
+      ),
+      throwsA(isA<RoutingException>()),
+    );
+    expect(calls, 3); // 1 initial + 2 retries
+  });
+
+  test('does not retry a 200 plain-text "no route" body', () async {
+    var calls = 0;
+    final client = MockClient((req) async {
+      calls++;
+      return http.Response('no track found, position not mapped', 200);
+    });
+    final svc = RoutingService(client: client);
+    await expectLater(
+      svc.route(
+        waypoints: const [LatLng(46.0, 8.0), LatLng(46.1, 8.0)],
+        curviness: Curviness.fast,
+      ),
+      throwsA(isA<RoutingException>()),
+    );
+    expect(calls, 1); // a permanent routing error is not retried
+  });
 }
