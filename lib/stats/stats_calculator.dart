@@ -79,6 +79,57 @@ class PeriodSummary {
   final double liters;
 }
 
+/// A calendar period next to the one immediately before it, for the overview's
+/// "this month / this year" headline. An empty period is reported as all-zero;
+/// the percentage deltas are null when the previous period had nothing to
+/// compare against (so the UI can show "neu" instead of a bogus ∞%).
+class PeriodComparison {
+  const PeriodComparison({required this.current, required this.previous});
+
+  final PeriodSummary current;
+  final PeriodSummary previous;
+
+  double? _pct(num now, num before) =>
+      before == 0 ? null : (now - before) / before * 100;
+
+  double? get kmDeltaPct => _pct(current.km, previous.km);
+  double? get chfDeltaPct => _pct(current.chf, previous.chf);
+  double? get litersDeltaPct => _pct(current.liters, previous.liters);
+}
+
+/// Fuel-price summary across every real fill-up (litres > 0), for the overview
+/// price card. [avgPricePerLiter] is litre-weighted — i.e. what was actually
+/// paid per litre on average, not the mean of the per-fill prices.
+class FuelInsights {
+  const FuelInsights({
+    required this.fillCount,
+    required this.avgPricePerLiter,
+    required this.cheapest,
+    required this.priciest,
+    required this.last,
+  });
+
+  final int fillCount;
+  final double avgPricePerLiter;
+  final FillUp? cheapest;
+  final FillUp? priciest;
+  final FillUp? last;
+
+  bool get hasData => fillCount > 0;
+
+  /// Latest fill's price minus the running average (negative = below average).
+  double? get lastVsAvg =>
+      last == null ? null : last!.pricePerLiter - avgPricePerLiter;
+
+  static const empty = FuelInsights(
+    fillCount: 0,
+    avgPricePerLiter: 0,
+    cheapest: null,
+    priciest: null,
+    last: null,
+  );
+}
+
 /// Pure stats calculator over a list of fill-ups sorted by odometer ASC.
 class StatsCalculator {
   static Stats computeStats(List<FillUp> fillups) {
@@ -193,6 +244,65 @@ class StatsCalculator {
       case PeriodGranularity.year:
         return DateTime(d.year);
     }
+  }
+
+  /// Inclusive start of the period immediately *before* the one [d] falls in.
+  static DateTime previousPeriodStart(DateTime d, PeriodGranularity g) {
+    final start = periodStart(d, g);
+    switch (g) {
+      case PeriodGranularity.week:
+        return start.subtract(const Duration(days: 7));
+      case PeriodGranularity.month:
+        // DateTime(y, 0) normalises to December of the previous year.
+        return DateTime(start.year, start.month - 1);
+      case PeriodGranularity.year:
+        return DateTime(start.year - 1);
+    }
+  }
+
+  /// The period containing [now] next to the one before it, at [granularity].
+  /// Periods with no fill-ups come back as all-zero summaries.
+  static PeriodComparison currentVsPrevious(
+    List<FillUp> fillups,
+    PeriodGranularity granularity, {
+    required DateTime now,
+  }) {
+    final byStart = {
+      for (final s in periodSummaries(fillups, granularity)) s.start: s,
+    };
+    PeriodSummary at(DateTime key) =>
+        byStart[key] ??
+        PeriodSummary(
+            start: key, granularity: granularity, km: 0, chf: 0, liters: 0);
+    return PeriodComparison(
+      current: at(periodStart(now, granularity)),
+      previous: at(previousPeriodStart(now, granularity)),
+    );
+  }
+
+  /// Litre-weighted average price, plus the cheapest / priciest / latest fills.
+  static FuelInsights computeFuelInsights(List<FillUp> fillups) {
+    final fills = fillups.where((f) => f.liters > 0).toList();
+    if (fills.isEmpty) return FuelInsights.empty;
+    var totalChf = 0.0;
+    var totalLiters = 0.0;
+    var cheapest = fills.first;
+    var priciest = fills.first;
+    var last = fills.first;
+    for (final f in fills) {
+      totalChf += f.totalChf;
+      totalLiters += f.liters;
+      if (f.pricePerLiter < cheapest.pricePerLiter) cheapest = f;
+      if (f.pricePerLiter > priciest.pricePerLiter) priciest = f;
+      if (f.date.isAfter(last.date)) last = f;
+    }
+    return FuelInsights(
+      fillCount: fills.length,
+      avgPricePerLiter: totalLiters > 0 ? totalChf / totalLiters : 0,
+      cheapest: cheapest,
+      priciest: priciest,
+      last: last,
+    );
   }
 
   /// ISO-8601 week number (1–53) for [date].
