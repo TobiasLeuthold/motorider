@@ -55,14 +55,20 @@ String buildGpx({
 }
 
 /// A filesystem-safe `.gpx` file name derived from a tour [name], e.g.
-/// `"Tour 16.06."` → `"Tour_16.06.gpx"`. Falls back to `route.gpx` when the
-/// name has no usable characters.
+/// `"Tour 16.06."` → `"Tour_16.06.gpx"`, `"Ölberg"` → `"Ölberg.gpx"`. Falls
+/// back to `route.gpx` when the name has no usable characters.
+///
+/// Keeps Unicode letters/digits — German/Swiss names routinely contain ä/ö/ü,
+/// and modern filesystems handle UTF-8 names fine — and drops characters that
+/// are unsafe in a path (`\ / : * ? " < > |`, control characters) plus
+/// symbols/emoji in a single pass. Spaces collapse to `_`; leading/trailing
+/// dots and underscores are trimmed so we never emit `..gpx` or hidden-style
+/// names.
 String gpxFilename(String name) {
-  final base = name.trim();
-  final cleaned = base
-      .replaceAll(RegExp(r'[^A-Za-z0-9 ._-]'), '')
-      .trim()
-      .replaceAll(RegExp(r'\s+'), '_');
+  final cleaned = name
+      .replaceAll(RegExp(r'[^\p{L}\p{N} ._-]', unicode: true), '')
+      .replaceAll(RegExp(r'\s+'), '_')
+      .replaceAll(RegExp(r'^[._]+|[._]+$'), '');
   return '${cleaned.isEmpty ? 'route' : cleaned}.gpx';
 }
 

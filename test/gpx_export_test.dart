@@ -118,17 +118,27 @@ void main() {
 
   group('gpxFilename', () {
     test('keeps a clean name and swaps spaces for underscores', () {
-      expect(gpxFilename('Tour 16.06.'), 'Tour_16.06..gpx');
       expect(gpxFilename('Bergpass'), 'Bergpass.gpx');
+      // Trailing dot is trimmed rather than producing a double-dot extension.
+      expect(gpxFilename('Tour 16.06.'), 'Tour_16.06.gpx');
     });
 
-    test('strips characters a filesystem dislikes', () {
+    test('preserves German/Swiss umlauts and other Unicode letters', () {
+      expect(gpxFilename('Ölberg'), 'Ölberg.gpx');
+      expect(gpxFilename('Zürich Tour'), 'Zürich_Tour.gpx');
+      expect(gpxFilename('Pässe & Täler'), 'Pässe_Täler.gpx');
+      expect(gpxFilename('Süd-Schwyz/Glarus'), 'Süd-SchwyzGlarus.gpx');
+    });
+
+    test('strips path-illegal characters, symbols and emoji', () {
       expect(gpxFilename('A/B:C*?'), 'ABC.gpx');
+      expect(gpxFilename('🏍️ Sonntag'), 'Sonntag.gpx');
     });
 
     test('falls back to route.gpx for an unusable name', () {
       expect(gpxFilename('   '), 'route.gpx');
       expect(gpxFilename('/\\:*'), 'route.gpx');
+      expect(gpxFilename('...'), 'route.gpx');
     });
   });
 }
