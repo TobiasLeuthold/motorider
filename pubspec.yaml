@@ -38,6 +38,7 @@ dependencies:
   connectivity_plus: ^6.1.0
   shared_preferences: ^2.3.3
   share_plus: ^13.1.0
+  wakelock_plus: ^1.6.1
 
 dev_dependencies:
   flutter_test:
