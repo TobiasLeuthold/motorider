@@ -7,6 +7,8 @@ import '../main.dart';
 import '../models/fillup.dart';
 import '../models/ride.dart';
 import '../services/location_service.dart';
+import '../stats/pass_exploration_loader.dart';
+import '../stats/pass_explorer.dart';
 import '../stats/ride_track_color.dart';
 import '../theme.dart';
 import 'add_fillup_screen.dart';
@@ -40,11 +42,49 @@ const _rideColor = Color(0xFF38BDF8);
 /// on the shared green→amber→red scale ([colorOnScale]).
 Color priceColor(double t) => colorOnScale(t);
 
+/// How a pass renders on the map. Pure so the styling contract — crossed pins
+/// are prominent and gold (with a `×N` badge only when crossed more than once),
+/// uncrossed pins are small and dim so ~99 markers stay legible — is unit-tested
+/// without pumping a widget. Consumed by both the [Marker] sizing and the
+/// [_PassMarker] paint.
+class PassMarkerSpec {
+  const PassMarkerSpec({
+    required this.crossed,
+    required this.size,
+    required this.badge,
+  });
+
+  /// All-time: has the rider crossed this pass at least once?
+  final bool crossed;
+
+  /// Square edge of the marker / its hit-test box, in logical pixels. Crossed
+  /// pins are markedly larger so they read above the dim uncrossed dots.
+  final double size;
+
+  /// The `×N` count label for a multiply-crossed pass, else null (a singly- or
+  /// un-crossed pass shows a glyph/dot instead of a number).
+  final String? badge;
+}
+
+/// Derive the marker spec for a pass from its all-time crossing count.
+PassMarkerSpec passMarkerSpec(PassProgress p) {
+  final crossed = p.crossed;
+  return PassMarkerSpec(
+    crossed: crossed,
+    size: crossed ? 30.0 : 14.0,
+    badge: p.count > 1 ? '×${p.count}' : null,
+  );
+}
+
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.stream});
+  const MapScreen({super.key, this.stream, this.passLoader});
 
   /// Optional stream override for testing. Defaults to the global repo.
   final Stream<List<FillUp>>? stream;
+
+  /// Optional pass-exploration loader override for testing. Defaults to one
+  /// backed by the global ride repo.
+  final PassExplorationLoader? passLoader;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -62,9 +102,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _didInitialFit = false;
 
   // Layer visibility — keeps the map uncluttered by letting the user pick
-  // what to see.
+  // what to see. Passes default off: 99 markers would otherwise clutter the
+  // first view, so the rider opts in.
   bool _showFuel = true;
   bool _showRides = true;
+  bool _showPasses = false;
+
+  // All-time pass exploration (which of the 99 passes have been crossed, and
+  // how often). Computed once off the first frame via [PassExplorationLoader]
+  // — independent of the date-window filter, which only scopes the fuel/ride
+  // *display*. Cached here so toggling the layer is instant.
+  List<PassProgress>? _passProgress;
+  bool _passesLoading = false;
 
   // How ride tracks are coloured (uniform / by a ride metric / speed heatmap).
   RideColorMode _rideColorMode = RideColorMode.uniform;
@@ -77,6 +126,29 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   // Default to Switzerland's geographic center.
   static const _swissCenter = LatLng(46.8182, 8.2275);
+
+  late final PassExplorationLoader _passLoader;
+
+  @override
+  void initState() {
+    super.initState();
+    _passLoader = widget.passLoader ?? PassExplorationLoader(rideRepo);
+  }
+
+  /// Compute the all-time pass crossings once, off the build thread. Triggered
+  /// lazily the first time the Pässe layer is switched on so we don't scan the
+  /// ride tracks for riders who never open the layer.
+  Future<void> _ensurePasses() async {
+    if (_passProgress != null || _passesLoading) return;
+    _passesLoading = true;
+    try {
+      final res = await _passLoader.compute();
+      if (!mounted) return;
+      setState(() => _passProgress = res.progress);
+    } finally {
+      _passesLoading = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -120,6 +192,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     .addPostFrameCallback((_) => _ensureRidePaths(rides));
               }
 
+              // Compute pass crossings on first reveal of the Pässe layer.
+              if (_showPasses && _passProgress == null && !_passesLoading) {
+                WidgetsBinding.instance
+                    .addPostFrameCallback((_) => _ensurePasses());
+              }
+
               // Colour-scale bounds for the active ride-colour mode, normalised
               // over exactly the rides currently shown (date filter applied).
               final rideMetric = _rideColorMode.metric;
@@ -150,7 +228,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               }
 
               final nothingShown = (!_showFuel || located.isEmpty) &&
-                  (!_showRides || rides.isEmpty);
+                  (!_showRides || rides.isEmpty) &&
+                  !_showPasses;
 
               return Stack(
                 children: [
@@ -194,6 +273,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         ),
                       MarkerLayer(
                         markers: [
+                          // Passes sit at the bottom of the marker stack so
+                          // fuel/ride/user pins stay tappable on top. Within the
+                          // layer, uncrossed (dim) first, then crossed (gold) so
+                          // the prominent ones win any overlap.
+                          if (_showPasses && _passProgress != null) ...[
+                            for (final p in _passProgress!)
+                              if (!p.crossed) _passMarker(p),
+                            for (final p in _passProgress!)
+                              if (p.crossed) _passMarker(p),
+                          ],
                           if (_showFuel)
                             for (final f in filteredFuel)
                               Marker(
@@ -258,12 +347,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         child: _FilterCard(
                           showFuel: _showFuel,
                           showRides: _showRides,
+                          showPasses: _showPasses,
                           onToggleFuel: () =>
                               setState(() => _showFuel = !_showFuel),
                           onToggleRides: () =>
                               setState(() => _showRides = !_showRides),
+                          onTogglePasses: () =>
+                              setState(() => _showPasses = !_showPasses),
                           fuelCount: filteredFuel.length,
                           rideCount: rides.length,
+                          passCrossedCount:
+                              _passProgress?.where((p) => p.crossed).length,
+                          passTotal: _passProgress?.length,
                           datePreset: _datePreset,
                           onDatePreset: (p) => setState(() => _datePreset = p),
                           priceActive: _priceFilter != null,
@@ -600,6 +695,35 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// A marker for one pass. Crossed → prominent gold pin with a `×N` badge when
+  /// crossed more than once; uncrossed → a small dim grey dot, so ~99 markers
+  /// stay legible. Hit-test sizes match the visual so taps land precisely.
+  Marker _passMarker(PassProgress p) {
+    final spec = passMarkerSpec(p);
+    return Marker(
+      point: p.pass.latLng,
+      width: spec.size,
+      height: spec.size,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _showPassDetails(p),
+        child: _PassMarker(spec: spec),
+      ),
+    );
+  }
+
+  void _showPassDetails(PassProgress p) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _PassSheet(progress: p),
+    );
+  }
+
   Future<void> _locateMe() async {
     setState(() => _locating = true);
     final res = await LocationService.getCurrent();
@@ -629,10 +753,14 @@ class _FilterCard extends StatelessWidget {
   const _FilterCard({
     required this.showFuel,
     required this.showRides,
+    required this.showPasses,
     required this.onToggleFuel,
     required this.onToggleRides,
+    required this.onTogglePasses,
     required this.fuelCount,
     required this.rideCount,
+    required this.passCrossedCount,
+    required this.passTotal,
     required this.datePreset,
     required this.onDatePreset,
     required this.priceActive,
@@ -650,10 +778,16 @@ class _FilterCard extends StatelessWidget {
 
   final bool showFuel;
   final bool showRides;
+  final bool showPasses;
   final VoidCallback onToggleFuel;
   final VoidCallback onToggleRides;
+  final VoidCallback onTogglePasses;
   final int fuelCount;
   final int rideCount;
+
+  /// Crossed / total passes once computed; null while the layer is loading.
+  final int? passCrossedCount;
+  final int? passTotal;
   final _DatePreset datePreset;
   final ValueChanged<_DatePreset> onDatePreset;
   final bool priceActive;
@@ -673,6 +807,10 @@ class _FilterCard extends StatelessWidget {
     final summary = <String>[
       if (showFuel) '$fuelCount Tankstopps',
       if (showRides) '$rideCount Touren',
+      if (showPasses)
+        passTotal == null
+            ? 'Pässe …'
+            : '${passCrossedCount ?? 0}/$passTotal Pässe',
     ].join(' · ');
 
     return Container(
@@ -713,6 +851,14 @@ class _FilterCard extends StatelessWidget {
                 onTap: onToggleRides,
                 tooltip: 'Touren',
                 activeColor: _rideColor,
+              ),
+              const SizedBox(width: 8),
+              _LayerToggle(
+                icon: Icons.terrain_rounded,
+                active: showPasses,
+                onTap: onTogglePasses,
+                tooltip: 'Pässe',
+                activeColor: AppColors.accent,
               ),
             ],
           ),
@@ -1192,6 +1338,137 @@ class _RideSheet extends StatelessWidget {
   }
 }
 
+/// Detail sheet for a tapped pass: its facts (elevation, cantons, the two
+/// places it connects) and the rider's all-time crossings, or a "not yet
+/// explored" hint when none.
+class _PassSheet extends StatelessWidget {
+  const _PassSheet({required this.progress});
+  final PassProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress.pass;
+    final crossed = progress.crossed;
+    final dateFmt = DateFormat('dd.MM.yyyy');
+    final color = crossed ? AppColors.accent : AppColors.textMuted;
+    final connects =
+        (p.connects != null && p.connects!.length == 2) ? p.connects! : null;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: color, width: 2),
+                  ),
+                  child: Icon(
+                    crossed
+                        ? Icons.terrain_rounded
+                        : Icons.landscape_rounded,
+                    color: AppColors.text,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.name,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                        ),
+                      ),
+                      Text(
+                        crossed
+                            ? '${progress.count}× erkundet'
+                            : 'Noch nicht erkundet',
+                        style: TextStyle(fontSize: 12, color: color),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _Metric(
+                  label: 'Höhe',
+                  value: p.ele == null ? '–' : '${p.ele} m',
+                ),
+                _Metric(
+                  label: 'Kanton',
+                  value: p.cantons.isEmpty ? '–' : p.cantons.join('/'),
+                ),
+                _Metric(
+                  label: 'Erkundet',
+                  value: crossed ? '${progress.count}×' : '–',
+                ),
+              ],
+            ),
+            if (connects != null) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  const Icon(Icons.swap_horiz_rounded,
+                      size: 16, color: AppColors.textMuted),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${connects[0]} ↔ ${connects[1]}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 14),
+            if (crossed)
+              Row(
+                children: [
+                  const Icon(Icons.event_rounded,
+                      size: 16, color: AppColors.textMuted),
+                  const SizedBox(width: 6),
+                  Text(
+                    progress.lastDate != null
+                        ? 'Zuletzt ${dateFmt.format(progress.lastDate!)}'
+                        : 'Zuletzt unbekannt',
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.textMuted),
+                  ),
+                ],
+              )
+            else
+              const Text(
+                'Diesen Pass hast du noch nicht überquert. Fahr hin und er '
+                'erscheint in Gold.',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Metric extends StatelessWidget {
   const _Metric({required this.label, required this.value});
   final String label;
@@ -1262,6 +1539,58 @@ class _RideBadge extends StatelessWidget {
         ],
       ),
       child: const Icon(Icons.route_rounded, size: 15, color: AppColors.bg),
+    );
+  }
+}
+
+/// Pass marker. Crossed → a prominent gold pin (mountain glyph, or a `×N` count
+/// when crossed more than once). Uncrossed → a small, dim grey dot, so the ~99
+/// passes don't turn the map into soup; the contrast is what keeps it readable.
+class _PassMarker extends StatelessWidget {
+  const _PassMarker({required this.spec});
+  final PassMarkerSpec spec;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!spec.crossed) {
+      // Subdued dot for not-yet-explored passes.
+      return Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.textMuted.withValues(alpha: 0.5),
+          border: Border.all(
+            color: AppColors.bg.withValues(alpha: 0.6),
+            width: 1.5,
+          ),
+        ),
+      );
+    }
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.accent,
+        border: Border.all(color: Colors.white, width: 2.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: spec.badge != null
+            ? Text(
+                spec.badge!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.bg,
+                ),
+              )
+            : const Icon(Icons.terrain_rounded, size: 16, color: AppColors.bg),
+      ),
     );
   }
 }
