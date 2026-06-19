@@ -47,6 +47,9 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.2
   sqflite_common_ffi: ^2.3.4
   xml: ^6.6.1
+  # Lets tests supply a fake GeolocatorPlatform (via MockPlatformInterfaceMixin)
+  # so RideTracker can be exercised headlessly. Already pulled in transitively.
+  plugin_platform_interface: ^2.1.8
 
 flutter:
   uses-material-design: true

@@ -107,8 +107,16 @@ class RideTracker {
   static const _pauseAfter = Duration(seconds: 15);
   static const _movingThresholdKmh = 3.0;
 
-  Future<void> startRide() async {
-    if (_state.isTracking) return;
+  /// Starts a new tracking session and returns `true`.
+  ///
+  /// Idempotent by design: if a ride is already being tracked (e.g. the rider
+  /// hit "Tour starten" before opening navigation), this is a **no-op** and
+  /// returns `false`. Callers that auto-start a tour — notably the navigation
+  /// screen — use the return value to know whether *they* own the session, so
+  /// navigation adopts an already-running tour instead of competing with it,
+  /// and never stops a tour the rider began independently.
+  Future<bool> startRide() async {
+    if (_state.isTracking) return false;
 
     // Permission gate. The user should already have ACCESS_FINE_LOCATION
     // from the fillup flow; we additionally need background location.
@@ -135,6 +143,7 @@ class RideTracker {
     ));
 
     _subscribePositions(forceLocationManager: false);
+    return true;
   }
 
   /// Subscribe to the position stream. Tries the fused (Google Play

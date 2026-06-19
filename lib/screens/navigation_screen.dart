@@ -264,19 +264,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
   // ─────────────────────── Auto ride tracking ────────────────────────────
 
   /// Records this navigation as a tour, unless the rider already has one
-  /// running (then theirs is left untouched). Best-effort: navigation still
-  /// works if tracking can't start (e.g. location permission denied).
+  /// running (then theirs is adopted and left untouched). Best-effort:
+  /// navigation still works if tracking can't start (e.g. location permission
+  /// denied).
+  ///
+  /// [RideTracker.startRide] is idempotent: it returns `false` (a no-op)
+  /// when a tour is already being tracked. We set [_autoTracking] only when it
+  /// returns `true` — i.e. only when THIS screen started a fresh session — so
+  /// navigation never stops a tour the rider began independently.
   Future<void> _startAutoTracking() async {
-    if (rideTracker.state.isTracking) return;
     try {
-      await rideTracker.startRide();
+      final startedNew = await rideTracker.startRide();
       if (!mounted) {
-        // Screen was popped while the tracker was still starting — stop it so
-        // it doesn't keep recording with no one left to end it.
-        await rideTracker.stopRide();
+        // Screen was popped while the tracker was still starting. Only stop it
+        // if WE started it; an adopted (pre-existing) tour stays running.
+        if (startedNew) await rideTracker.stopRide();
         return;
       }
-      _autoTracking = true;
+      _autoTracking = startedNew;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
