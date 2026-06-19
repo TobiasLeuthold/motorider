@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../main.dart';
 import '../models/curviness.dart';
@@ -91,6 +92,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
   @override
   void initState() {
     super.initState();
+    // Keep the screen awake for the whole navigation session (like Google Maps),
+    // so it never sleeps mid-ride. Released again in dispose() — which covers
+    // every exit path (back button, finishing the route, etc.) — restoring the
+    // normal system screen timeout.
+    WakelockPlus.enable();
     _geometry = widget.geometry;
     _remainingDest = widget.waypoints.length > 1
         ? widget.waypoints.sublist(1)
@@ -401,6 +407,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   void dispose() {
+    // Navigation is over → let the screen sleep on the normal system timeout
+    // again. Fire-and-forget (the screen is going away).
+    WakelockPlus.disable();
     // Left navigation before arriving → stop the auto-started tour so it
     // doesn't keep recording in the background. Fire-and-forget (the screen is
     // going away); stopRide() still persists the ride. No-op if arrival already
