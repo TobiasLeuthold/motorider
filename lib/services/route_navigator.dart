@@ -82,6 +82,7 @@ class RouteNavigator {
     this.offRouteThresholdM = 45,
     this.offRouteStreakNeeded = 3,
     this.arriveRadiusM = 35,
+    this.arriveProgressFraction = 0.9,
   }) : _cum = cumulativeMeters(geometry) {
     for (final m in maneuvers) {
       if (m.isTurn && m.geometryIndex >= 0 && m.geometryIndex < _cum.length) {
@@ -98,11 +99,40 @@ class RouteNavigator {
   final int offRouteStreakNeeded;
   final double arriveRadiusM;
 
+  /// Fraction of the route's total length the rider must have progressed
+  /// through before the destination radius is armed. This is what defeats the
+  /// round-trip case: when start ≈ finish, a fix at the *start* can snap onto
+  /// the route's final segment (it's spatially near the end), which alone would
+  /// report `remaining ≈ 0` and trip arrival instantly. Requiring the rider to
+  /// have actually advanced through most of the polyline first means the
+  /// destination radius only goes live once they've done the loop. For a plain
+  /// A→B route the rider naturally crosses this near the end, so arrival still
+  /// fires there. Default 0.9 (≈ last tenth of the route).
+  final double arriveProgressFraction;
+
   final List<double> _cum;
   final List<_TurnAt> _turns = [];
   int _offStreak = 0;
   LatLng? _lastRaw;
   double? _lastCourse;
+
+  /// High-water mark of how far along the route the rider has genuinely
+  /// reached, in meters. Only advances (never rewinds), so passing spatially
+  /// near the end early in a loop can't fake progress — the rider has to have
+  /// actually travelled there. Drives the arrival gate.
+  double _maxAlong = 0;
+
+  /// Most the progress high-water mark may grow per fix, in meters. At ~1 Hz
+  /// this caps believable advancement: 250 m/tick tolerates a fast motorcycle
+  /// plus a few seconds of GPS gap, while still being far smaller than a typical
+  /// loop, so a start-of-loop snap onto the final segment (a multi-km jump) is
+  /// rejected instead of faking arrival.
+  static const double _maxJumpM = 250.0;
+
+  /// Latches true once the rider has reached the destination. Arrival never
+  /// un-fires (see where it's set), which keeps a round-trip finish stable even
+  /// though its closing fix is spatially ambiguous with the start.
+  bool _arrived = false;
 
   final _controller = StreamController<NavState>.broadcast();
   NavState _state = const NavState.initial();
@@ -125,8 +155,36 @@ class RouteNavigator {
     _offStreak = isOff ? _offStreak + 1 : 0;
     final offRoute = _offStreak >= offRouteStreakNeeded;
 
-    final arrived = remaining <= arriveRadiusM &&
-        snap.crossTrackMeters <= offRouteThresholdM;
+    // Advance the progress high-water mark, but reject implausible forward
+    // jumps. On a round trip (start ≈ finish) a fix at the *start* can snap onto
+    // the route's *final* segment, yielding `along ≈ totalMeters`. Accepting
+    // that would arm arrival instantly. A real rider can't teleport: between
+    // ~1 Hz fixes they advance at most a vehicle's worth of distance, so we only
+    // let the mark grow by a bounded step per update (with a generous cap for
+    // GPS gaps / fast travel). The first fix seeds the mark directly so a route
+    // that genuinely starts mid-line still tracks correctly.
+    if (_maxAlong == 0 && along <= _maxJumpM) {
+      _maxAlong = along;
+    } else if (along > _maxAlong) {
+      _maxAlong = math.min(along, _maxAlong + _maxJumpM);
+    }
+    // The destination radius is only armed once the rider has progressed through
+    // most of the route (so they've actually done the loop, not just started
+    // near where it ends). Crossing into the final portion can land just shy of
+    // the radius, so also accept being within the radius of the very end vertex.
+    final progressedEnough =
+        _maxAlong >= totalMeters * arriveProgressFraction ||
+            _maxAlong >= totalMeters - arriveRadiusM;
+    // Arrival is sticky: once the rider has genuinely reached the destination we
+    // stay "arrived". This matters for a round trip whose finish coincides with
+    // its start — the closing fix is spatially ambiguous and can snap back onto
+    // the route's *first* segment (remaining ≈ total), which would otherwise
+    // flip arrival off again right after it fired.
+    final arrived = _arrived ||
+        (progressedEnough &&
+            remaining <= arriveRadiusM &&
+            snap.crossTrackMeters <= offRouteThresholdM);
+    _arrived = arrived;
 
     // Next turn ahead: first maneuver more than 8 m past the current position
     // (so we don't keep announcing one we're already on top of).
