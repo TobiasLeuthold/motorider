@@ -601,6 +601,9 @@ class _PassTile extends StatelessWidget {
       if (p.ele != null) '${p.ele} m',
       if (p.cantons.isNotEmpty) p.cantons.join('/'),
       if (p.hairpins != null) '${p.hairpins} Kehren',
+      // Kurvigkeit (°/km) — only on genuinely curvy passes to avoid clutter.
+      if (p.curvinessScore != null && p.curvinessScore! >= 200)
+        '${p.curvinessScore!.round()} °/km',
     ].join(' · ');
 
     return Opacity(

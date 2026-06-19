@@ -374,7 +374,8 @@ void main() {
         "passes": [
           {"name":"Furkapass","lat":46.5727,"lon":8.4152,"ele":2429,
            "cantons":["VS","UR"],"connects":["Realp","Gletsch"],
-           "hairpins":null,"maxGradientPct":null,"climbLengthKm":null,"osmId":123},
+           "hairpins":10,"curvinessScore":385.1,
+           "maxGradientPct":null,"climbLengthKm":null,"osmId":123},
           {"name":"Col de la Tourne","lat":46.9837,"lon":6.7789,"ele":null,
            "cantons":["NE"],"connects":null}
         ]
@@ -386,9 +387,12 @@ void main() {
       expect(passes[0].ele, 2429);
       expect(passes[0].cantons, ['VS', 'UR']);
       expect(passes[0].connects, ['Realp', 'Gletsch']);
-      expect(passes[0].hairpins, isNull);
+      expect(passes[0].hairpins, 10);
+      expect(passes[0].curvinessScore, 385.1);
       expect(passes[1].ele, isNull);
       expect(passes[1].connects, isNull);
+      expect(passes[1].hairpins, isNull);
+      expect(passes[1].curvinessScore, isNull);
     });
 
     test('parseAttribution extracts the ODbL string', () {
@@ -461,6 +465,77 @@ void main() {
         if (!seen.add(n)) dupes.add(n);
       }
       expect(dupes, {'Col de la Croix'});
+    });
+
+    // ── computed curve / hairpin data (tools/compute_pass_curves.dart) ──
+    // These guard the OSM-derived hairpin + curviness fields: that they're
+    // populated for the whole dataset, sit in a sane range, and rank the
+    // famously serpentine passes well above the gentle ones. Bounds are
+    // deliberately loose so minor OSM edits don't break CI, but tight enough
+    // that an empty/garbage recompute (all-null, or 0 for Furka) fails.
+
+    test('hairpins is populated for the vast majority of passes', () {
+      final withHairpins = passes.where((p) => p.hairpins != null).length;
+      // Aim is "large majority"; a few cols may resist analysis.
+      expect(withHairpins, greaterThanOrEqualTo((passes.length * 0.9).floor()),
+          reason: 'only $withHairpins/${passes.length} have hairpins');
+    });
+
+    test('every known hairpin count is in a sane range (0–80)', () {
+      for (final p in passes) {
+        final h = p.hairpins;
+        if (h == null) continue;
+        expect(h, inInclusiveRange(0, 80), reason: 'hairpins ${p.name} = $h');
+      }
+    });
+
+    test('curvinessScore is populated and non-negative where present', () {
+      final withCv = passes.where((p) => p.curvinessScore != null).length;
+      expect(withCv, greaterThanOrEqualTo((passes.length * 0.9).floor()),
+          reason: 'only $withCv/${passes.length} have curvinessScore');
+      for (final p in passes) {
+        final c = p.curvinessScore;
+        if (c == null) continue;
+        // °/km: 0 for a straight road, into the high hundreds for a serpentine.
+        expect(c, inInclusiveRange(0, 1500), reason: 'curviness ${p.name} = $c');
+      }
+    });
+
+    test('famously hairpin-heavy passes have plausibly high counts', () {
+      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
+      // Floors set well below the computed values (which range ~10–39) so the
+      // test is robust, while still failing if the detector regresses to ~0.
+      expect(byName('Furkapass').hairpins, greaterThanOrEqualTo(6),
+          reason: 'Furka should be very hairpinny');
+      expect(byName('Grimselpass').hairpins, greaterThanOrEqualTo(6));
+      expect(byName('Passo del San Bernardino').hairpins,
+          greaterThanOrEqualTo(15));
+      expect(byName('Passo dello Spluga - Splügenpass').hairpins,
+          greaterThanOrEqualTo(12));
+      expect(byName('Klausenpass').hairpins, greaterThanOrEqualTo(8));
+      expect(byName('Albulapass').hairpins, greaterThanOrEqualTo(6));
+      expect(byName('Julierpass').hairpins, greaterThanOrEqualTo(6));
+    });
+
+    test('gentle passes have far fewer hairpins than the serpentine ones', () {
+      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
+      // Smooth / fast / low passes: a handful at most.
+      expect(byName('Simplonpass').hairpins, lessThanOrEqualTo(6),
+          reason: 'Simplon is a fast sweeping pass, not hairpinny');
+      expect(byName('Brünigpass').hairpins, lessThanOrEqualTo(8));
+      expect(byName('Albispass').hairpins, lessThanOrEqualTo(8));
+      // And the ordering that motivates the whole feature holds.
+      expect(byName('Passo del San Bernardino').hairpins!,
+          greaterThan(byName('Brünigpass').hairpins!));
+      expect(byName('Furkapass').hairpins!,
+          greaterThan(byName('Simplonpass').hairpins!));
+    });
+
+    test('curviness tracks hairpins: serpentine passes out-curve gentle ones',
+        () {
+      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
+      expect(byName('Passo del San Bernardino').curvinessScore!,
+          greaterThan(byName('Simplonpass').curvinessScore!));
     });
   });
 }

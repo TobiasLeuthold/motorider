@@ -1,5 +1,5 @@
 {
- "_attribution": "Pass data © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright). Curated subset of named road passes in Switzerland.",
+ "_attribution": "Pass data © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright). Curated subset of named road passes in Switzerland. Hairpin counts & curviness computed from OSM road geometry (approximate).",
  "_count": 99,
  "passes": [
   {
@@ -15,10 +15,11 @@
     "Santa Maria",
     "Bormio"
    ],
-   "hairpins": null,
+   "hairpins": 30,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1847275612
+   "osmId": 1847275612,
+   "curvinessScore": 764.2
   },
   {
    "name": "Nufenenpass / Passo della Novena",
@@ -33,10 +34,11 @@
     "Ulrichen",
     "Airolo"
    ],
-   "hairpins": null,
+   "hairpins": 15,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1479101970
+   "osmId": 1479101970,
+   "curvinessScore": 417.4
   },
   {
    "name": "Col du Grand Saint-Bernard",
@@ -51,10 +53,11 @@
     "Martigny",
     "Aosta"
    ],
-   "hairpins": null,
+   "hairpins": 12,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2001818936
+   "osmId": 2001818936,
+   "curvinessScore": 608.8
   },
   {
    "name": "Furkapass",
@@ -69,10 +72,11 @@
     "Realp",
     "Gletsch"
    ],
-   "hairpins": null,
+   "hairpins": 10,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1457531552
+   "osmId": 1457531552,
+   "curvinessScore": 385.1
   },
   {
    "name": "Flüelapass",
@@ -86,10 +90,11 @@
     "Davos",
     "Susch"
    ],
-   "hairpins": null,
+   "hairpins": 11,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1456730408
+   "osmId": 1456730408,
+   "curvinessScore": 381.8
   },
   {
    "name": "Passo del Bernina",
@@ -103,10 +108,11 @@
     "Pontresina",
     "Poschiavo"
    ],
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 80118203
+   "osmId": 80118203,
+   "curvinessScore": 391.5
   },
   {
    "name": "Albulapass",
@@ -120,10 +126,11 @@
     "Tiefencastel",
     "La Punt"
    ],
-   "hairpins": null,
+   "hairpins": 10,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 529654944
+   "osmId": 529654944,
+   "curvinessScore": 405.7
   },
   {
    "name": "Julierpass",
@@ -137,10 +144,11 @@
     "Tiefencastel",
     "Silvaplana"
    ],
-   "hairpins": null,
+   "hairpins": 14,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1604293770
+   "osmId": 1604293770,
+   "curvinessScore": 389.7
   },
   {
    "name": "Col du Sanetsch",
@@ -154,10 +162,11 @@
     "Sion",
     "Gsteig"
    ],
-   "hairpins": null,
+   "hairpins": 12,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 485239200
+   "osmId": 485239200,
+   "curvinessScore": 631.3
   },
   {
    "name": "Sustenpass",
@@ -172,10 +181,11 @@
     "Innertkirchen",
     "Wassen"
    ],
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1435921493
+   "osmId": 1435921493,
+   "curvinessScore": 302.5
   },
   {
    "name": "Grimselpass",
@@ -190,10 +200,11 @@
     "Gletsch",
     "Innertkirchen"
    ],
-   "hairpins": null,
+   "hairpins": 15,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1456026791
+   "osmId": 1456026791,
+   "curvinessScore": 451.9
   },
   {
    "name": "Pass dal Fuorn",
@@ -207,10 +218,11 @@
     "Zernez",
     "Müstair"
    ],
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 82677753
+   "osmId": 82677753,
+   "curvinessScore": 321.7
   },
   {
    "name": "Passo dello Spluga - Splügenpass",
@@ -225,10 +237,11 @@
     "Splügen",
     "Chiavenna"
    ],
-   "hairpins": null,
+   "hairpins": 28,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 6038984981
+   "osmId": 6038984981,
+   "curvinessScore": 631.9
   },
   {
    "name": "Passo del San Gottardo",
@@ -242,10 +255,11 @@
     "Airolo",
     "Andermatt"
    ],
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 4936977615
+   "osmId": 4936977615,
+   "curvinessScore": 190.8
   },
   {
    "name": "Passo del San Bernardino",
@@ -259,10 +273,11 @@
     "Hinterrhein",
     "Mesocco"
    ],
-   "hairpins": null,
+   "hairpins": 39,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1845679597
+   "osmId": 1845679597,
+   "curvinessScore": 869.2
   },
   {
    "name": "Oberalppass",
@@ -277,10 +292,11 @@
     "Andermatt",
     "Disentis"
    ],
-   "hairpins": null,
+   "hairpins": 11,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 278908223
+   "osmId": 278908223,
+   "curvinessScore": 406.1
   },
   {
    "name": "Simplonpass",
@@ -294,10 +310,11 @@
     "Brig",
     "Domodossola"
    ],
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1456020279
+   "osmId": 1456020279,
+   "curvinessScore": 166.5
   },
   {
    "name": "Passo del Lucomagno",
@@ -312,10 +329,11 @@
     "Disentis",
     "Olivone"
    ],
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1478875365
+   "osmId": 1478875365,
+   "curvinessScore": 156.5
   },
   {
    "name": "Grosse Scheidegg",
@@ -329,10 +347,11 @@
     "Grindelwald",
     "Meiringen"
    ],
-   "hairpins": null,
+   "hairpins": 24,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 281779660
+   "osmId": 281779660,
+   "curvinessScore": 880.1
   },
   {
    "name": "Klausenpass",
@@ -346,10 +365,11 @@
     "Altdorf",
     "Linthal"
    ],
-   "hairpins": null,
+   "hairpins": 16,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1604293771
+   "osmId": 1604293771,
+   "curvinessScore": 585.7
   },
   {
    "name": "Glaspass",
@@ -363,10 +383,11 @@
     "Thusis",
     "Vals"
    ],
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1883248347
+   "osmId": 1883248347,
+   "curvinessScore": 566.7
   },
   {
    "name": "Malojapass",
@@ -380,10 +401,11 @@
     "Silvaplana",
     "Chiavenna"
    ],
-   "hairpins": null,
+   "hairpins": 14,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 258384887
+   "osmId": 258384887,
+   "curvinessScore": 437.2
   },
   {
    "name": "Punt dal Gall",
@@ -395,10 +417,11 @@
     "GR"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 524554037
+   "osmId": 524554037,
+   "curvinessScore": 210.2
   },
   {
    "name": "Col de la Croix",
@@ -409,10 +432,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2312731790
+   "osmId": 2312731790,
+   "curvinessScore": 452.7
   },
   {
    "name": "Wolfgangpass",
@@ -426,10 +450,11 @@
     "Davos",
     "Klosters"
    ],
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1456748165
+   "osmId": 1456748165,
+   "curvinessScore": 183.3
   },
   {
    "name": "Glaubenbielen",
@@ -440,10 +465,11 @@
     "OW"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1256098859
+   "osmId": 1256098859,
+   "curvinessScore": 494.6
   },
   {
    "name": "Gurnigelpass",
@@ -454,10 +480,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 9,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2108923833
+   "osmId": 2108923833,
+   "curvinessScore": 488.3
   },
   {
    "name": "Pragelpass",
@@ -471,10 +498,11 @@
     "Muotathal",
     "Glarus"
    ],
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1533696169
+   "osmId": 1533696169,
+   "curvinessScore": 536.4
   },
   {
    "name": "Col du Pillon",
@@ -488,10 +516,11 @@
     "Les Diablerets",
     "Gstaad"
    ],
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 83218210
+   "osmId": 83218210,
+   "curvinessScore": 353.7
   },
   {
    "name": "Glaubenbergpass",
@@ -503,10 +532,11 @@
     "OW"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 8,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1417747629
+   "osmId": 1417747629,
+   "curvinessScore": 450.5
   },
   {
    "name": "Col de la Forclaz",
@@ -520,10 +550,11 @@
     "Martigny",
     "Le Châble"
    ],
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 945001634
+   "osmId": 945001634,
+   "curvinessScore": 275.7
   },
   {
    "name": "Jaunpass",
@@ -537,10 +568,11 @@
     "Bulle",
     "Zweisimmen"
    ],
-   "hairpins": null,
+   "hairpins": 10,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1434204855
+   "osmId": 1434204855,
+   "curvinessScore": 448.7
   },
   {
    "name": "Col du Chasseral",
@@ -552,10 +584,11 @@
     "NE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 275654404
+   "osmId": 275654404,
+   "curvinessScore": 300.2
   },
   {
    "name": "Col de Champex",
@@ -566,10 +599,11 @@
     "VS"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 19,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 5082234989
+   "osmId": 5082234989,
+   "curvinessScore": 776.6
   },
   {
    "name": "Col du Marchairuz",
@@ -580,10 +614,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2521699413
+   "osmId": 2521699413,
+   "curvinessScore": 311.0
   },
   {
    "name": "Col des Mosses",
@@ -597,10 +632,11 @@
     "Aigle",
     "Château-d’Œx"
    ],
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1102704120
+   "osmId": 1102704120,
+   "curvinessScore": 364.6
   },
   {
    "name": "Ibergeregg",
@@ -611,10 +647,11 @@
     "SZ"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 8,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 5254587716
+   "osmId": 5254587716,
+   "curvinessScore": 572.4
   },
   {
    "name": "Passo dell'Alpe di Neggia",
@@ -625,10 +662,11 @@
     "TI"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 264071175
+   "osmId": 264071175,
+   "curvinessScore": 701.9
   },
   {
    "name": "Pas de Morgins",
@@ -642,10 +680,11 @@
     "Monthey",
     "Châtel"
    ],
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2501960454
+   "osmId": 2501960454,
+   "curvinessScore": 289.1
   },
   {
    "name": "Kunkelspass",
@@ -659,10 +698,11 @@
     "Tamins",
     "Vättis"
    ],
-   "hairpins": null,
+   "hairpins": 8,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1390050648
+   "osmId": 1390050648,
+   "curvinessScore": 603.5
   },
   {
    "name": "Schwägalp Passhöhe",
@@ -674,10 +714,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 3098387428
+   "osmId": 3098387428,
+   "curvinessScore": 284.2
   },
   {
    "name": "Vue des Alpes",
@@ -688,10 +729,11 @@
     "NE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 282843029
+   "osmId": 282843029,
+   "curvinessScore": 289.3
   },
   {
    "name": "Saanenmöser",
@@ -702,10 +744,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2888050506
+   "osmId": 2888050506,
+   "curvinessScore": 249.7
   },
   {
    "name": "Col de la Givrine",
@@ -716,10 +759,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2498035793
+   "osmId": 2498035793,
+   "curvinessScore": 314.4
   },
   {
    "name": "Col du Mont Crosin",
@@ -730,10 +774,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 9028718417
+   "osmId": 9028718417,
+   "curvinessScore": 224.4
   },
   {
    "name": "Sattelegg",
@@ -744,10 +789,11 @@
     "SZ"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 7,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 5254588463
+   "osmId": 5254588463,
+   "curvinessScore": 556.2
   },
   {
    "name": "Col du Mollendruz",
@@ -758,10 +804,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 286440973
+   "osmId": 286440973,
+   "curvinessScore": 414.2
   },
   {
    "name": "Schallenbergpass",
@@ -772,10 +819,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1589707950
+   "osmId": 1589707950,
+   "curvinessScore": 330.2
   },
   {
    "name": "Col des Etroits",
@@ -786,10 +834,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 275803553
+   "osmId": 275803553,
+   "curvinessScore": 299.9
   },
   {
    "name": "Col de Pétra Félix",
@@ -800,10 +849,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 253631519
+   "osmId": 253631519,
+   "curvinessScore": 370.4
   },
   {
    "name": "Col des Pontins",
@@ -815,10 +865,11 @@
     "NE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2998383448
+   "osmId": 2998383448,
+   "curvinessScore": 219.4
   },
   {
    "name": "St. Anton",
@@ -831,10 +882,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 424222468
+   "osmId": 424222468,
+   "curvinessScore": 434.2
   },
   {
    "name": "Wildhaus",
@@ -845,10 +897,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1604293776
+   "osmId": 1604293776,
+   "curvinessScore": 122.7
   },
   {
    "name": "Raten",
@@ -859,10 +912,11 @@
     "ZG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2548847799
+   "osmId": 2548847799,
+   "curvinessScore": 221.6
   },
   {
    "name": "Col du Mont d'Orzeires",
@@ -873,10 +927,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 2520476063
+   "osmId": 2520476063,
+   "curvinessScore": 255.6
   },
   {
    "name": "Wissegg",
@@ -888,10 +943,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 307927004
+   "osmId": 307927004,
+   "curvinessScore": 348.4
   },
   {
    "name": "Scheltenpass",
@@ -903,10 +959,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1269622930
+   "osmId": 1269622930,
+   "curvinessScore": 445.4
   },
   {
    "name": "Ruppenpass",
@@ -919,10 +976,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 795059948
+   "osmId": 795059948,
+   "curvinessScore": 550.8
   },
   {
    "name": "Brünigpass",
@@ -937,10 +995,11 @@
     "Meiringen",
     "Lungern"
    ],
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1456037442
+   "osmId": 1456037442,
+   "curvinessScore": 328.3
   },
   {
    "name": "Hulftegg",
@@ -952,10 +1011,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 6501190121
+   "osmId": 6501190121,
+   "curvinessScore": 305.1
   },
   {
    "name": "Sternenbergpass",
@@ -968,10 +1028,11 @@
     "TG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1780144836
+   "osmId": 1780144836,
+   "curvinessScore": 559.1
   },
   {
    "name": "Etzelpass",
@@ -982,10 +1043,11 @@
     "SZ"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1639345922
+   "osmId": 1639345922,
+   "curvinessScore": 431.7
   },
   {
    "name": "Stoss",
@@ -997,10 +1059,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1475352806
+   "osmId": 1475352806,
+   "curvinessScore": 375.5
   },
   {
    "name": "Col du Fuet",
@@ -1011,10 +1074,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1996157341
+   "osmId": 1996157341,
+   "curvinessScore": 316.4
   },
   {
    "name": "Biberegg",
@@ -1025,10 +1089,11 @@
     "SZ"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1864723668
+   "osmId": 1864723668,
+   "curvinessScore": 113.0
   },
   {
    "name": "Ornpass",
@@ -1039,10 +1104,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1928547834
+   "osmId": 1928547834,
+   "curvinessScore": 422.6
   },
   {
    "name": "Oberricken",
@@ -1053,10 +1119,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1827330485
+   "osmId": 1827330485,
+   "curvinessScore": 227.2
   },
   {
    "name": "Col du Chalet-à-Gobet",
@@ -1067,10 +1134,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 3434255909
+   "osmId": 3434255909,
+   "curvinessScore": 90.0
   },
   {
    "name": "Col des Rangiers",
@@ -1081,10 +1149,11 @@
     "JU"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1480933404
+   "osmId": 1480933404,
+   "curvinessScore": 220.9
   },
   {
    "name": "Wasserfluh",
@@ -1095,10 +1164,11 @@
     "SG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1612338085
+   "osmId": 1612338085,
+   "curvinessScore": 293.6
   },
   {
    "name": "Col de Pierre Pertuis",
@@ -1109,10 +1179,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1864803668
+   "osmId": 1864803668,
+   "curvinessScore": 251.6
   },
   {
    "name": "Santelhöchi",
@@ -1124,10 +1195,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1817828090
+   "osmId": 1817828090,
+   "curvinessScore": 454.4
   },
   {
    "name": "Albispass",
@@ -1138,10 +1210,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 243076765
+   "osmId": 243076765,
+   "curvinessScore": 284.2
   },
   {
    "name": "Col de la Croix",
@@ -1152,10 +1225,11 @@
     "JU"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 29757549
+   "osmId": 29757549,
+   "curvinessScore": 426.9
   },
   {
    "name": "Buchenegg",
@@ -1166,10 +1240,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 10,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 817301336
+   "osmId": 817301336,
+   "curvinessScore": 655.6
   },
   {
    "name": "Salhöhe",
@@ -1181,10 +1256,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 298678777
+   "osmId": 298678777,
+   "curvinessScore": 323.9
   },
   {
    "name": "Challpass",
@@ -1196,10 +1272,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 9536589861
+   "osmId": 9536589861,
+   "curvinessScore": 218.6
   },
   {
    "name": "Oberer Hauenstein",
@@ -1211,10 +1288,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1604293772
+   "osmId": 1604293772,
+   "curvinessScore": 290.6
   },
   {
    "name": "Vorderer Pfannenstiel",
@@ -1225,10 +1303,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 13091953124
+   "osmId": 13091953124,
+   "curvinessScore": 336.4
   },
   {
    "name": "Sankt Luzisteig",
@@ -1239,10 +1318,11 @@
     "GR"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 410060036
+   "osmId": 410060036,
+   "curvinessScore": 405.9
   },
   {
    "name": "Stockerehöchi",
@@ -1253,10 +1333,11 @@
     "BE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 279122360
+   "osmId": 279122360,
+   "curvinessScore": 183.9
   },
   {
    "name": "Unterer Hauenstein",
@@ -1268,10 +1349,11 @@
     "SO"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 3,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1496658778
+   "osmId": 1496658778,
+   "curvinessScore": 256.9
   },
   {
    "name": "Benkerjoch",
@@ -1282,10 +1364,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 286011956
+   "osmId": 286011956,
+   "curvinessScore": 481.6
   },
   {
    "name": "Staffelegg",
@@ -1296,10 +1379,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 268830023
+   "osmId": 268830023,
+   "curvinessScore": 267.4
   },
   {
    "name": "Bööler Passhöchi",
@@ -1310,10 +1394,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 286052203
+   "osmId": 286052203,
+   "curvinessScore": 271.2
   },
   {
    "name": "Buseregg",
@@ -1324,10 +1409,11 @@
     "BL"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1245781140
+   "osmId": 1245781140,
+   "curvinessScore": 253.1
   },
   {
    "name": "Ampferehöchi",
@@ -1338,10 +1424,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 29974104
+   "osmId": 29974104,
+   "curvinessScore": 172.6
   },
   {
    "name": "Bözbergpass",
@@ -1352,10 +1439,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1851538764
+   "osmId": 1851538764,
+   "curvinessScore": 198.2
   },
   {
    "name": "Monte Ceneri",
@@ -1366,10 +1454,11 @@
     "TI"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 6,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1485137013
+   "osmId": 1485137013,
+   "curvinessScore": 242.3
   },
   {
    "name": "Siblingerhöhe",
@@ -1380,10 +1469,11 @@
     "SH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 9559110502
+   "osmId": 9559110502,
+   "curvinessScore": 158.9
   },
   {
    "name": "Mutschellenpass",
@@ -1394,10 +1484,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 5,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 436385442
+   "osmId": 436385442,
+   "curvinessScore": 179.6
   },
   {
    "name": "Bürersteig Passhöhe",
@@ -1408,10 +1499,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 29835796
+   "osmId": 29835796,
+   "curvinessScore": 270.9
   },
   {
    "name": "Grünegg Passhöhe",
@@ -1422,10 +1514,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 7,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 31317947
+   "osmId": 31317947,
+   "curvinessScore": 364.3
   },
   {
    "name": "Belchen",
@@ -1437,10 +1530,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 364621254
+   "osmId": 364621254,
+   "curvinessScore": 224.2
   },
   {
    "name": "Siglistorfer",
@@ -1452,10 +1546,11 @@
     "ZH"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 0,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 311087582
+   "osmId": 311087582,
+   "curvinessScore": 147.4
   },
   {
    "name": "Zurzacherberg Passhöhe",
@@ -1466,10 +1561,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 6521394714
+   "osmId": 6521394714,
+   "curvinessScore": 404.7
   },
   {
    "name": "Col de la Tourne",
@@ -1480,10 +1576,11 @@
     "NE"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 4,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 13346799842
+   "osmId": 13346799842,
+   "curvinessScore": 193.0
   },
   {
    "name": "Höhtal",
@@ -1494,10 +1591,11 @@
     "AG"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 2,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 1166239425
+   "osmId": 1166239425,
+   "curvinessScore": 480.8
   },
   {
    "name": "Seuil d'Attalens",
@@ -1509,10 +1607,11 @@
     "VD"
    ],
    "connects": null,
-   "hairpins": null,
+   "hairpins": 1,
    "maxGradientPct": null,
    "climbLengthKm": null,
-   "osmId": 9461790079
+   "osmId": 9461790079,
+   "curvinessScore": 391.7
   }
  ]
 }
