@@ -37,6 +37,7 @@ class Pass {
     this.ele,
     this.connects,
     this.hairpins,
+    this.curvinessScore,
     this.maxGradientPct,
     this.climbLengthKm,
     this.osmId,
@@ -56,7 +57,17 @@ class Pass {
   /// The two end places the pass road connects, e.g. `['Realp', 'Gletsch']`.
   final List<String>? connects;
 
+  /// Number of hairpin switchbacks on the pass road, computed from OSM road
+  /// geometry (see `tools/compute_pass_curves.dart`). Approximate; null when
+  /// the road geometry couldn't be analysed.
   final int? hairpins;
+
+  /// "Kurvigkeit" — degrees of heading change per kilometre along the pass
+  /// road (see [curvinessScore] in `services/geo.dart`). ~0 for a dead-straight
+  /// road, into the hundreds for a serpentine. Computed from the same geometry
+  /// as [hairpins]; null when unavailable.
+  final double? curvinessScore;
+
   final double? maxGradientPct;
   final double? climbLengthKm;
 
@@ -84,6 +95,7 @@ class Pass {
       ele: toI(j['ele']),
       connects: strList(j['connects']),
       hairpins: toI(j['hairpins']),
+      curvinessScore: toD(j['curvinessScore']),
       maxGradientPct: toD(j['maxGradientPct']),
       climbLengthKm: toD(j['climbLengthKm']),
       osmId: toI(j['osmId']),
