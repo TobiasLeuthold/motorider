@@ -3,6 +3,8 @@ import 'package:intl/intl.dart';
 
 import '../main.dart';
 import '../models/fillup.dart';
+import '../stats/pass_exploration_loader.dart';
+import '../stats/pass_explorer.dart';
 import '../stats/stats_calculator.dart';
 import '../theme.dart';
 import '../widgets/consumption_chart.dart';
@@ -12,6 +14,7 @@ import '../widgets/seg_toggle.dart';
 import '../widgets/stat_card.dart';
 import 'add_fillup_screen.dart';
 import 'home_shell.dart';
+import 'passes_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key, this.stream});
@@ -133,6 +136,8 @@ class DashboardScreen extends StatelessWidget {
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 sliver: SliverList.list(children: [
+                  const PassesTeaserCard(),
+                  const SizedBox(height: 16),
                   _SpendOverviewCard(fillups: fillups),
                   const SizedBox(height: 16),
                   _FuelPriceCard(
@@ -554,6 +559,158 @@ class _PriceExtreme extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Übersicht teaser for the Pässe feature: "Pässe erkundet · X / 99 (Z %)"
+/// with a slim progress bar. Computes crossings off the build thread and opens
+/// the full [PassesScreen] on tap. Runs its own future so it doesn't disturb
+/// the dashboard's fuel stream.
+class PassesTeaserCard extends StatefulWidget {
+  const PassesTeaserCard({super.key, this.loader});
+
+  /// Injectable for tests; defaults to the global ride repo.
+  final PassExplorationLoader? loader;
+
+  @override
+  State<PassesTeaserCard> createState() => _PassesTeaserCardState();
+}
+
+class _PassesTeaserCardState extends State<PassesTeaserCard> {
+  late final Future<PassExplorationResult> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    final loader = widget.loader ?? PassExplorationLoader(rideRepo);
+    _future = loader.compute();
+  }
+
+  void _open() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PassesScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PassExplorationResult>(
+      future: _future,
+      builder: (context, snap) {
+        final stats = snap.data?.stats;
+        final explored = stats?.explored ?? 0;
+        final total = stats?.total ?? 99;
+        final pct = stats?.percent ?? 0;
+        return Material(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: _open,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border:
+                    Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: const Icon(Icons.terrain_rounded,
+                            color: AppColors.accent, size: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Pässe erkundet',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (snap.connectionState != ConnectionState.done)
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        const Icon(Icons.chevron_right_rounded,
+                            color: AppColors.textMuted),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '$explored',
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      Text(
+                        ' / $total',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${pct.toStringAsFixed(0)} %',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Stack(
+                      children: [
+                        Container(height: 8, color: AppColors.surfaceHi),
+                        FractionallySizedBox(
+                          widthFactor:
+                              (total == 0 ? 0.0 : explored / total).clamp(0.0, 1.0),
+                          child: Container(
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [AppColors.accentSoft, AppColors.accent],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
