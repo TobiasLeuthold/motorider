@@ -11,6 +11,7 @@ import '../main.dart';
 import '../models/curviness.dart';
 import '../models/ride_point.dart';
 import '../services/geo.dart';
+import '../services/location_service.dart';
 import '../services/maneuvers.dart';
 import '../services/ride_tracker.dart';
 import '../services/route_navigator.dart';
@@ -68,6 +69,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _simulating = false;
   bool _follow = true;
   bool _rerouting = false;
+  // True while we're fetching the current location / routing the lead-in to the
+  // planned start, so the UI can show a brief "heading to the start" hint.
+  bool _preparingLeadIn = false;
   String? _gpsError;
   // True only when THIS screen auto-started the ride tracker. Lets us end the
   // tour exactly once and never stop a tour the rider began manually.
@@ -218,10 +222,72 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Future<void> _startSession() async {
     await _startAutoTracking();
     if (!mounted) return;
+    // Before any fixes flow, see whether we should first guide the rider from
+    // where they actually are to the planned route's start (a "lead-in"). This
+    // rebuilds the navigator over the stitched route, so it must happen before
+    // the fix subscription is wired below.
+    await _maybePrependLeadIn();
+    if (!mounted) return;
     if (rideTracker.state.isTracking) {
       _useTrackerFixes();
     } else {
       await _startGps();
+    }
+  }
+
+  /// If the rider's current location is meaningfully away from the planned
+  /// route's start, prepend a connector route (current → start) so navigation
+  /// guides them to the start first and only then onto the planned route. The
+  /// planned route's destination stays the finish. Best-effort and silent: if
+  /// the location is unavailable or the connector can't be routed, navigation
+  /// just follows the planned route as before.
+  Future<void> _maybePrependLeadIn() async {
+    final start = widget.geometry.first;
+    final loc = await LocationService.getCurrent(timeout: const Duration(seconds: 6));
+    if (!mounted) return;
+    final current = loc.position == null
+        ? null
+        : LatLng(loc.position!.latitude, loc.position!.longitude);
+    if (!needsLeadIn(current, start)) return;
+
+    setState(() => _preparingLeadIn = true);
+    try {
+      // Fastest sensible roads for the connector — it's just getting to the
+      // start, not part of the scenic plan.
+      final leadIn = await _router.route(
+        waypoints: [current!, start],
+        curviness: Curviness.fast,
+      );
+      if (!mounted) return;
+      final planned = RouteResult(
+        geometry: widget.geometry,
+        distanceM: pathLengthMeters(widget.geometry),
+        durationS: widget.durationS,
+        ascentM: null,
+        curviness: 0,
+        profile: widget.curviness.profile,
+        maneuvers: widget.maneuvers,
+      );
+      final stitched = prependLeadIn(leadIn, planned);
+      // Swap the navigator to the stitched route. No fix source is attached yet,
+      // so just rebuild (don't tear down a non-existent subscription).
+      await _navSub?.cancel();
+      await _nav.dispose();
+      setState(() => _geometry = stitched.geometry);
+      _nav = _buildNavigator(
+        stitched.geometry,
+        stitched.durationS,
+        stitched.maneuvers,
+      );
+      _subscribeNav();
+      if (mounted) {
+        _controller.move(_geometry.first, _navZoom);
+      }
+    } on RoutingException {
+      // Couldn't route the connector (offline / no road): fall back to the
+      // planned route unchanged — never block navigation on the lead-in.
+    } finally {
+      if (mounted) setState(() => _preparingLeadIn = false);
     }
   }
 
@@ -557,6 +623,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 color: AppColors.surfaceHi,
                 icon: Icons.gps_off_rounded,
                 text: _gpsError!,
+              ),
+            ),
+
+          if (_preparingLeadIn)
+            Positioned(
+              left: 16,
+              right: 16,
+              top: 120,
+              child: _InfoBanner(
+                color: AppColors.surfaceHi,
+                icon: Icons.route_rounded,
+                text: 'Route zum Start wird berechnet …',
               ),
             ),
 
