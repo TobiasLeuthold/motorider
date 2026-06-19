@@ -48,6 +48,73 @@ const _elevationSmoothingWindow = 7;
 /// a 50 m error circle over a 1 s segment is pure noise.
 const _maxAccuracyForSpeedM = 30.0;
 
+/// Reported horizontal accuracy (m) above which a fix is dropped from the
+/// cleaned track entirely. On an open road a fix is good to a few metres; an
+/// error circle this large means multipath under tree cover / in a canyon,
+/// where the receiver itself is telling us the position is unreliable. This is
+/// the artifact behind a track that wanders off the road into the forest.
+const _maxTrustedAccuracyM = 50.0;
+
+/// A fix is treated as a positional *spike* only when BOTH hold: detouring
+/// through it adds at least [_spikeDetourM] over going straight between its two
+/// neighbours, AND reaching it from the previous kept fix implies a speed above
+/// [_spikeSpeedKmh]. Requiring both is what makes this safe — a genuine hairpin
+/// (large detour, sane speed) and a fast straight (high speed, ~no detour) each
+/// fail one half, so only a teleport-out-and-back (the GPS artifact) is removed.
+const _spikeDetourM = 50.0;
+const _spikeSpeedKmh = 150.0;
+
+/// Removes GPS outliers from a raw recorded track so the polyline stays on the
+/// road and distance/speed aren't inflated by jumps.
+///
+/// **Non-destructive**: returns a new list and leaves the raw points (SQLite,
+/// the sync payload) untouched — every reader cleans on the way out instead, so
+/// no real data is ever lost and the thresholds can be retuned later without a
+/// migration.
+///
+/// Two conservative, independent filters, both tuned to drop noise and never
+/// real riding data:
+///   1. **Accuracy gate** — drop fixes whose own reported error circle exceeds
+///      [_maxTrustedAccuracyM]. The receiver has flagged these as junk.
+///   2. **Spike gate** — drop an interior fix you could only reach by
+///      teleporting (see [_spikeDetourM] / [_spikeSpeedKmh]). Compared against
+///      the previous *kept* fix, so a run of consecutive spikes is peeled off
+///      one at a time rather than measured against another bad point.
+///
+/// This is GPS de-spiking, not road map-matching: it removes the jumps that
+/// wreck the trace, but doesn't glue every point to a road centreline.
+List<RidePoint> cleanRideTrack(List<RidePoint> points) {
+  if (points.length < 3) return points;
+
+  // 1. Accuracy gate.
+  final trusted = <RidePoint>[
+    for (final p in points)
+      if ((p.accuracyM ?? 0) <= _maxTrustedAccuracyM) p,
+  ];
+  if (trusted.length < 3) return trusted;
+
+  // 2. Spike gate. The endpoints have no pair of neighbours to judge against,
+  // so they always survive.
+  final out = <RidePoint>[trusted.first];
+  for (var i = 1; i < trusted.length - 1; i++) {
+    final prev = out.last;
+    final cur = trusted[i];
+    final next = trusted[i + 1];
+    final dPrev = haversineMeters(prev.lat, prev.lon, cur.lat, cur.lon);
+    final dNext = haversineMeters(cur.lat, cur.lon, next.lat, next.lon);
+    final dSkip = haversineMeters(prev.lat, prev.lon, next.lat, next.lon);
+    final detour = dPrev + dNext - dSkip;
+    final dtSec = cur.ts.difference(prev.ts).inMilliseconds / 1000.0;
+    final impliedKmh = dtSec > 0 ? dPrev / dtSec * 3.6 : double.infinity;
+    if (detour > _spikeDetourM && impliedKmh > _spikeSpeedKmh) {
+      continue; // teleport-out-and-back artifact — drop it
+    }
+    out.add(cur);
+  }
+  out.add(trusted.last);
+  return out;
+}
+
 double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
   const earthR = 6371000.0;
   final dLat = (lat2 - lat1) * math.pi / 180;
@@ -137,7 +204,8 @@ List<double?> medianFilteredSpeeds(List<double?> xs, {int window = 5}) {
 ///      doubling the recorded top speed.
 ///   3. elevationGain sums positive altitude deltas in a moving-average
 ///      smoothed series.
-RideStats computeStats(List<RidePoint> points) {
+RideStats computeStats(List<RidePoint> rawPoints) {
+  final points = cleanRideTrack(rawPoints);
   if (points.length < 2) {
     return RideStats.empty;
   }
