@@ -82,7 +82,8 @@ const _maxChartSamples = 300;
 const _bandEdges = [50.0, 80.0, 100.0];
 const _bandLabels = ['< 50', '50–80', '80–100', '> 100'];
 
-RideDetailStats computeDetailStats(List<RidePoint> points) {
+RideDetailStats computeDetailStats(List<RidePoint> rawPoints) {
+  final points = cleanRideTrack(rawPoints);
   if (points.length < 2) {
     return const RideDetailStats(
       speedSeries: [],

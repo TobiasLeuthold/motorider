@@ -138,6 +138,63 @@ void main() {
     });
   });
 
+  group('cleanRideTrack', () {
+    test('a clean trace is returned unchanged', () {
+      final pts = trace(List.filled(60, 90.0));
+      expect(cleanRideTrack(pts).length, pts.length);
+    });
+
+    test('drops a teleport-out-and-back spike', () {
+      // One fix flung 120 m sideways and back: a classic multipath jump.
+      final pts = trace(List.filled(60, 100.0), noiseAt: {30: 120.0});
+      final cleaned = cleanRideTrack(pts);
+      expect(cleaned.length, pts.length - 1);
+      // The offending sequence (30) is the one removed.
+      expect(cleaned.any((p) => p.sequence == 30), isFalse);
+    });
+
+    test('drops fixes the receiver itself flags as inaccurate', () {
+      final base = trace(List.filled(40, 80.0));
+      final pts = [
+        for (final p in base)
+          if (p.sequence == 20)
+            RidePoint(
+              rideId: p.rideId,
+              sequence: p.sequence,
+              ts: p.ts,
+              lat: p.lat,
+              lon: p.lon,
+              speedMs: p.speedMs,
+              accuracyM: 80, // > _maxTrustedAccuracyM
+            )
+          else
+            p,
+      ];
+      final cleaned = cleanRideTrack(pts);
+      expect(cleaned.any((p) => p.sequence == 20), isFalse);
+      expect(cleaned.length, pts.length - 1);
+    });
+
+    test('keeps a genuine sharp corner (big detour, but sane speed)', () {
+      // A real hairpin has a large turn angle yet a believable speed, so the
+      // spike gate must not eat it.
+      final pts =
+          arcTrace(speedKmh: 30, radiusM: 12, seconds: 60, rightTurn: true);
+      expect(cleanRideTrack(pts).length, pts.length);
+    });
+
+    test('a sub-250 km/h jump no longer inflates distance', () {
+      // 50 m sideways on a slow (30 km/h) trace implies ~182 km/h — under the
+      // old 250 km/h cap, so it used to be counted into distance. The cleaner
+      // removes it, bringing distance back in line with the spike-free trace.
+      final clean = computeStats(trace(List.filled(60, 30.0))).distanceKm;
+      final withSpike =
+          computeStats(trace(List.filled(60, 30.0), noiseAt: {30: 50.0}))
+              .distanceKm;
+      expect(withSpike, closeTo(clean, 0.02));
+    });
+  });
+
   group('computeDetailStats', () {
     test('counts stops and measures the longest one', () {
       final profile = [

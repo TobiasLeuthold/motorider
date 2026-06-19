@@ -94,8 +94,7 @@ class _RidePolylineMapState extends State<RidePolylineMap> {
   /// Group consecutive points of the same speed bucket into single polylines.
   /// Runs share their boundary point so the track stays gap-free; a typical
   /// ride yields a few dozen runs, well within PolylineLayer's comfort zone.
-  List<Polyline> _speedColoredPolylines() {
-    final pts = widget.points;
+  List<Polyline> _speedColoredPolylines(List<RidePoint> pts) {
     final speeds = medianFilteredSpeeds(effectiveSpeedsKmh(pts), window: 3);
     // Segment s runs from point s-1 to point s and is colored by the speed at
     // its endpoint. Consecutive same-bucket segments merge into one polyline;
@@ -123,7 +122,11 @@ class _RidePolylineMapState extends State<RidePolylineMap> {
 
   @override
   Widget build(BuildContext context) {
-    final polylinePts = widget.points.map((p) => LatLng(p.lat, p.lon)).toList();
+    // De-spike the raw fixes before drawing so a multipath jump doesn't paint
+    // the track off into the trees. Same cleaner the stats use, so the line and
+    // the numbers always agree.
+    final pts = cleanRideTrack(widget.points);
+    final polylinePts = pts.map((p) => LatLng(p.lat, p.lon)).toList();
     final initialCenter = polylinePts.isNotEmpty ? polylinePts.last : _swissCenter;
     final initialZoom = polylinePts.isNotEmpty ? 14.5 : 8.5;
     final useSpeedColors = widget.colorBySpeed && polylinePts.length >= 2;
@@ -148,7 +151,7 @@ class _RidePolylineMapState extends State<RidePolylineMap> {
         if (polylinePts.length >= 2)
           PolylineLayer(
             polylines: useSpeedColors
-                ? _speedColoredPolylines()
+                ? _speedColoredPolylines(pts)
                 : [
                     Polyline(
                       points: polylinePts,
