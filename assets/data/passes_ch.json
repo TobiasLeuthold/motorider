@@ -1,0 +1,1518 @@
+{
+ "_attribution": "Pass data © OpenStreetMap contributors, ODbL (openstreetmap.org/copyright). Curated subset of named road passes in Switzerland.",
+ "_count": 99,
+ "passes": [
+  {
+   "name": "Pass Umbrail - Giogo di Santa Maria",
+   "lat": 46.541645,
+   "lon": 10.433177,
+   "ele": 2501,
+   "cantons": [
+    "IT",
+    "GR"
+   ],
+   "connects": [
+    "Santa Maria",
+    "Bormio"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1847275612
+  },
+  {
+   "name": "Nufenenpass / Passo della Novena",
+   "lat": 46.477119,
+   "lon": 8.387828,
+   "ele": 2480,
+   "cantons": [
+    "VS",
+    "TI"
+   ],
+   "connects": [
+    "Ulrichen",
+    "Airolo"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1479101970
+  },
+  {
+   "name": "Col du Grand Saint-Bernard",
+   "lat": 45.869053,
+   "lon": 7.170409,
+   "ele": 2469,
+   "cantons": [
+    "IT",
+    "VS"
+   ],
+   "connects": [
+    "Martigny",
+    "Aosta"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2001818936
+  },
+  {
+   "name": "Furkapass",
+   "lat": 46.572685,
+   "lon": 8.415184,
+   "ele": 2429,
+   "cantons": [
+    "VS",
+    "UR"
+   ],
+   "connects": [
+    "Realp",
+    "Gletsch"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1457531552
+  },
+  {
+   "name": "Flüelapass",
+   "lat": 46.7475,
+   "lon": 9.950284,
+   "ele": 2383,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Davos",
+    "Susch"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1456730408
+  },
+  {
+   "name": "Passo del Bernina",
+   "lat": 46.410926,
+   "lon": 10.02762,
+   "ele": 2330,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Pontresina",
+    "Poschiavo"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 80118203
+  },
+  {
+   "name": "Albulapass",
+   "lat": 46.582251,
+   "lon": 9.837682,
+   "ele": 2312,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Tiefencastel",
+    "La Punt"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 529654944
+  },
+  {
+   "name": "Julierpass",
+   "lat": 46.472214,
+   "lon": 9.728146,
+   "ele": 2284,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Tiefencastel",
+    "Silvaplana"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1604293770
+  },
+  {
+   "name": "Col du Sanetsch",
+   "lat": 46.331575,
+   "lon": 7.286225,
+   "ele": 2252,
+   "cantons": [
+    "VS"
+   ],
+   "connects": [
+    "Sion",
+    "Gsteig"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 485239200
+  },
+  {
+   "name": "Sustenpass",
+   "lat": 46.72912,
+   "lon": 8.44652,
+   "ele": 2224,
+   "cantons": [
+    "BE",
+    "UR"
+   ],
+   "connects": [
+    "Innertkirchen",
+    "Wassen"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1435921493
+  },
+  {
+   "name": "Grimselpass",
+   "lat": 46.561519,
+   "lon": 8.337697,
+   "ele": 2164,
+   "cantons": [
+    "BE",
+    "VS"
+   ],
+   "connects": [
+    "Gletsch",
+    "Innertkirchen"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1456026791
+  },
+  {
+   "name": "Pass dal Fuorn",
+   "lat": 46.639774,
+   "lon": 10.292186,
+   "ele": 2150,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Zernez",
+    "Müstair"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 82677753
+  },
+  {
+   "name": "Passo dello Spluga - Splügenpass",
+   "lat": 46.505616,
+   "lon": 9.330336,
+   "ele": 2115,
+   "cantons": [
+    "IT",
+    "GR"
+   ],
+   "connects": [
+    "Splügen",
+    "Chiavenna"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 6038984981
+  },
+  {
+   "name": "Passo del San Gottardo",
+   "lat": 46.559309,
+   "lon": 8.561154,
+   "ele": 2106,
+   "cantons": [
+    "TI"
+   ],
+   "connects": [
+    "Airolo",
+    "Andermatt"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 4936977615
+  },
+  {
+   "name": "Passo del San Bernardino",
+   "lat": 46.497149,
+   "lon": 9.17114,
+   "ele": 2067,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Hinterrhein",
+    "Mesocco"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1845679597
+  },
+  {
+   "name": "Oberalppass",
+   "lat": 46.658739,
+   "lon": 8.671169,
+   "ele": 2044,
+   "cantons": [
+    "GR",
+    "UR"
+   ],
+   "connects": [
+    "Andermatt",
+    "Disentis"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 278908223
+  },
+  {
+   "name": "Simplonpass",
+   "lat": 46.250211,
+   "lon": 8.031681,
+   "ele": 2006,
+   "cantons": [
+    "VS"
+   ],
+   "connects": [
+    "Brig",
+    "Domodossola"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1456020279
+  },
+  {
+   "name": "Passo del Lucomagno",
+   "lat": 46.574306,
+   "lon": 8.801183,
+   "ele": 1972,
+   "cantons": [
+    "GR",
+    "TI"
+   ],
+   "connects": [
+    "Disentis",
+    "Olivone"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1478875365
+  },
+  {
+   "name": "Grosse Scheidegg",
+   "lat": 46.655878,
+   "lon": 8.101867,
+   "ele": 1962,
+   "cantons": [
+    "BE"
+   ],
+   "connects": [
+    "Grindelwald",
+    "Meiringen"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 281779660
+  },
+  {
+   "name": "Klausenpass",
+   "lat": 46.868191,
+   "lon": 8.855442,
+   "ele": 1952,
+   "cantons": [
+    "UR"
+   ],
+   "connects": [
+    "Altdorf",
+    "Linthal"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1604293771
+  },
+  {
+   "name": "Glaspass",
+   "lat": 46.676747,
+   "lon": 9.345247,
+   "ele": 1843,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Thusis",
+    "Vals"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1883248347
+  },
+  {
+   "name": "Malojapass",
+   "lat": 46.399936,
+   "lon": 9.695807,
+   "ele": 1815,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Silvaplana",
+    "Chiavenna"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 258384887
+  },
+  {
+   "name": "Punt dal Gall",
+   "lat": 46.62436,
+   "lon": 10.195958,
+   "ele": 1805,
+   "cantons": [
+    "IT",
+    "GR"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 524554037
+  },
+  {
+   "name": "Col de la Croix",
+   "lat": 46.324702,
+   "lon": 7.126718,
+   "ele": 1776,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2312731790
+  },
+  {
+   "name": "Wolfgangpass",
+   "lat": 46.832656,
+   "lon": 9.853739,
+   "ele": 1630,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Davos",
+    "Klosters"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1456748165
+  },
+  {
+   "name": "Glaubenbielen",
+   "lat": 46.81881,
+   "lon": 8.093167,
+   "ele": 1611,
+   "cantons": [
+    "OW"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1256098859
+  },
+  {
+   "name": "Gurnigelpass",
+   "lat": 46.732035,
+   "lon": 7.447882,
+   "ele": 1608,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2108923833
+  },
+  {
+   "name": "Pragelpass",
+   "lat": 46.999368,
+   "lon": 8.8695,
+   "ele": 1548,
+   "cantons": [
+    "SZ"
+   ],
+   "connects": [
+    "Muotathal",
+    "Glarus"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1533696169
+  },
+  {
+   "name": "Col du Pillon",
+   "lat": 46.353429,
+   "lon": 7.204597,
+   "ele": 1546,
+   "cantons": [
+    "VD"
+   ],
+   "connects": [
+    "Les Diablerets",
+    "Gstaad"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 83218210
+  },
+  {
+   "name": "Glaubenbergpass",
+   "lat": 46.892456,
+   "lon": 8.107666,
+   "ele": 1540,
+   "cantons": [
+    "LU",
+    "OW"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1417747629
+  },
+  {
+   "name": "Col de la Forclaz",
+   "lat": 46.057731,
+   "lon": 7.001346,
+   "ele": 1527,
+   "cantons": [
+    "VS"
+   ],
+   "connects": [
+    "Martigny",
+    "Le Châble"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 945001634
+  },
+  {
+   "name": "Jaunpass",
+   "lat": 46.592159,
+   "lon": 7.33908,
+   "ele": 1508,
+   "cantons": [
+    "BE"
+   ],
+   "connects": [
+    "Bulle",
+    "Zweisimmen"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1434204855
+  },
+  {
+   "name": "Col du Chasseral",
+   "lat": 47.119423,
+   "lon": 7.032299,
+   "ele": 1502,
+   "cantons": [
+    "BE",
+    "NE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 275654404
+  },
+  {
+   "name": "Col de Champex",
+   "lat": 46.031811,
+   "lon": 7.106786,
+   "ele": 1498,
+   "cantons": [
+    "VS"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 5082234989
+  },
+  {
+   "name": "Col du Marchairuz",
+   "lat": 46.552791,
+   "lon": 6.250287,
+   "ele": 1449,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2521699413
+  },
+  {
+   "name": "Col des Mosses",
+   "lat": 46.398976,
+   "lon": 7.10263,
+   "ele": 1445,
+   "cantons": [
+    "VD"
+   ],
+   "connects": [
+    "Aigle",
+    "Château-d’Œx"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1102704120
+  },
+  {
+   "name": "Ibergeregg",
+   "lat": 47.017428,
+   "lon": 8.73321,
+   "ele": 1406,
+   "cantons": [
+    "SZ"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 5254587716
+  },
+  {
+   "name": "Passo dell'Alpe di Neggia",
+   "lat": 46.110669,
+   "lon": 8.845454,
+   "ele": 1395,
+   "cantons": [
+    "TI"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 264071175
+  },
+  {
+   "name": "Pas de Morgins",
+   "lat": 46.249702,
+   "lon": 6.84589,
+   "ele": 1371,
+   "cantons": [
+    "VS"
+   ],
+   "connects": [
+    "Monthey",
+    "Châtel"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2501960454
+  },
+  {
+   "name": "Kunkelspass",
+   "lat": 46.85617,
+   "lon": 9.411567,
+   "ele": 1357,
+   "cantons": [
+    "GR"
+   ],
+   "connects": [
+    "Tamins",
+    "Vättis"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1390050648
+  },
+  {
+   "name": "Schwägalp Passhöhe",
+   "lat": 47.253545,
+   "lon": 9.303714,
+   "ele": 1300,
+   "cantons": [
+    "AR",
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 3098387428
+  },
+  {
+   "name": "Vue des Alpes",
+   "lat": 47.072722,
+   "lon": 6.869822,
+   "ele": 1283,
+   "cantons": [
+    "NE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 282843029
+  },
+  {
+   "name": "Saanenmöser",
+   "lat": 46.514448,
+   "lon": 7.304696,
+   "ele": 1279,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2888050506
+  },
+  {
+   "name": "Col de la Givrine",
+   "lat": 46.456004,
+   "lon": 6.088444,
+   "ele": 1232,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2498035793
+  },
+  {
+   "name": "Col du Mont Crosin",
+   "lat": 47.190622,
+   "lon": 7.039912,
+   "ele": 1226,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 9028718417
+  },
+  {
+   "name": "Sattelegg",
+   "lat": 47.127334,
+   "lon": 8.846823,
+   "ele": 1190,
+   "cantons": [
+    "SZ"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 5254588463
+  },
+  {
+   "name": "Col du Mollendruz",
+   "lat": 46.649907,
+   "lon": 6.365888,
+   "ele": 1180,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 286440973
+  },
+  {
+   "name": "Schallenbergpass",
+   "lat": 46.826153,
+   "lon": 7.796857,
+   "ele": 1167,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1589707950
+  },
+  {
+   "name": "Col des Etroits",
+   "lat": 46.829866,
+   "lon": 6.495036,
+   "ele": 1152,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 275803553
+  },
+  {
+   "name": "Col de Pétra Félix",
+   "lat": 46.659132,
+   "lon": 6.348132,
+   "ele": 1144,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 253631519
+  },
+  {
+   "name": "Col des Pontins",
+   "lat": 47.132577,
+   "lon": 6.996685,
+   "ele": 1110,
+   "cantons": [
+    "BE",
+    "NE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2998383448
+  },
+  {
+   "name": "St. Anton",
+   "lat": 47.409942,
+   "lon": 9.535172,
+   "ele": 1110,
+   "cantons": [
+    "AR",
+    "AI",
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 424222468
+  },
+  {
+   "name": "Wildhaus",
+   "lat": 47.203329,
+   "lon": 9.350506,
+   "ele": 1098,
+   "cantons": [
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1604293776
+  },
+  {
+   "name": "Raten",
+   "lat": 47.141802,
+   "lon": 8.663294,
+   "ele": 1077,
+   "cantons": [
+    "ZG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2548847799
+  },
+  {
+   "name": "Col du Mont d'Orzeires",
+   "lat": 46.685256,
+   "lon": 6.336971,
+   "ele": 1060,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 2520476063
+  },
+  {
+   "name": "Wissegg",
+   "lat": 47.392359,
+   "lon": 9.460928,
+   "ele": 1058,
+   "cantons": [
+    "AR",
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 307927004
+  },
+  {
+   "name": "Scheltenpass",
+   "lat": 47.335839,
+   "lon": 7.581817,
+   "ele": 1051,
+   "cantons": [
+    "BE",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1269622930
+  },
+  {
+   "name": "Ruppenpass",
+   "lat": 47.396096,
+   "lon": 9.502612,
+   "ele": 1016,
+   "cantons": [
+    "AR",
+    "AI",
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 795059948
+  },
+  {
+   "name": "Brünigpass",
+   "lat": 46.756863,
+   "lon": 8.136986,
+   "ele": 1005,
+   "cantons": [
+    "BE",
+    "OW"
+   ],
+   "connects": [
+    "Meiringen",
+    "Lungern"
+   ],
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1456037442
+  },
+  {
+   "name": "Hulftegg",
+   "lat": 47.362166,
+   "lon": 8.966646,
+   "ele": 954,
+   "cantons": [
+    "SG",
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 6501190121
+  },
+  {
+   "name": "Sternenbergpass",
+   "lat": 47.376628,
+   "lon": 8.942942,
+   "ele": 952,
+   "cantons": [
+    "SG",
+    "ZH",
+    "TG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1780144836
+  },
+  {
+   "name": "Etzelpass",
+   "lat": 47.173448,
+   "lon": 8.772272,
+   "ele": 950,
+   "cantons": [
+    "SZ"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1639345922
+  },
+  {
+   "name": "Stoss",
+   "lat": 47.360848,
+   "lon": 9.494888,
+   "ele": 943,
+   "cantons": [
+    "AR",
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1475352806
+  },
+  {
+   "name": "Col du Fuet",
+   "lat": 47.250683,
+   "lon": 7.183695,
+   "ele": 935,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1996157341
+  },
+  {
+   "name": "Biberegg",
+   "lat": 47.093384,
+   "lon": 8.669432,
+   "ele": 932,
+   "cantons": [
+    "SZ"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1864723668
+  },
+  {
+   "name": "Ornpass",
+   "lat": 47.289212,
+   "lon": 8.883556,
+   "ele": 925,
+   "cantons": [
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1928547834
+  },
+  {
+   "name": "Oberricken",
+   "lat": 47.273236,
+   "lon": 9.027605,
+   "ele": 908,
+   "cantons": [
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1827330485
+  },
+  {
+   "name": "Col du Chalet-à-Gobet",
+   "lat": 46.566465,
+   "lon": 6.696612,
+   "ele": 872,
+   "cantons": [
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 3434255909
+  },
+  {
+   "name": "Col des Rangiers",
+   "lat": 47.384817,
+   "lon": 7.219149,
+   "ele": 856,
+   "cantons": [
+    "JU"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1480933404
+  },
+  {
+   "name": "Wasserfluh",
+   "lat": 47.326049,
+   "lon": 9.114565,
+   "ele": 848,
+   "cantons": [
+    "SG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1612338085
+  },
+  {
+   "name": "Col de Pierre Pertuis",
+   "lat": 47.210017,
+   "lon": 7.194226,
+   "ele": 827,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1864803668
+  },
+  {
+   "name": "Santelhöchi",
+   "lat": 47.339006,
+   "lon": 7.805189,
+   "ele": 797,
+   "cantons": [
+    "BL",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1817828090
+  },
+  {
+   "name": "Albispass",
+   "lat": 47.276007,
+   "lon": 8.521143,
+   "ele": 790,
+   "cantons": [
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 243076765
+  },
+  {
+   "name": "Col de la Croix",
+   "lat": 47.372855,
+   "lon": 7.141353,
+   "ele": 789,
+   "cantons": [
+    "JU"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 29757549
+  },
+  {
+   "name": "Buchenegg",
+   "lat": 47.296144,
+   "lon": 8.507809,
+   "ele": 786,
+   "cantons": [
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 817301336
+  },
+  {
+   "name": "Salhöhe",
+   "lat": 47.428926,
+   "lon": 7.985968,
+   "ele": 779,
+   "cantons": [
+    "AG",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 298678777
+  },
+  {
+   "name": "Challpass",
+   "lat": 47.450382,
+   "lon": 7.4588,
+   "ele": 746,
+   "cantons": [
+    "BL",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 9536589861
+  },
+  {
+   "name": "Oberer Hauenstein",
+   "lat": 47.351658,
+   "lon": 7.763983,
+   "ele": 734,
+   "cantons": [
+    "BL",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1604293772
+  },
+  {
+   "name": "Vorderer Pfannenstiel",
+   "lat": 47.286441,
+   "lon": 8.681238,
+   "ele": 727,
+   "cantons": [
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 13091953124
+  },
+  {
+   "name": "Sankt Luzisteig",
+   "lat": 47.029606,
+   "lon": 9.528192,
+   "ele": 713,
+   "cantons": [
+    "GR"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 410060036
+  },
+  {
+   "name": "Stockerehöchi",
+   "lat": 46.987606,
+   "lon": 7.509696,
+   "ele": 692,
+   "cantons": [
+    "BE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 279122360
+  },
+  {
+   "name": "Unterer Hauenstein",
+   "lat": 47.381343,
+   "lon": 7.86898,
+   "ele": 690,
+   "cantons": [
+    "BL",
+    "SO"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1496658778
+  },
+  {
+   "name": "Benkerjoch",
+   "lat": 47.435436,
+   "lon": 8.030087,
+   "ele": 674,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 286011956
+  },
+  {
+   "name": "Staffelegg",
+   "lat": 47.433821,
+   "lon": 8.060461,
+   "ele": 621,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 268830023
+  },
+  {
+   "name": "Bööler Passhöchi",
+   "lat": 47.307338,
+   "lon": 8.084186,
+   "ele": 611,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 286052203
+  },
+  {
+   "name": "Buseregg",
+   "lat": 47.49522,
+   "lon": 7.855764,
+   "ele": 581,
+   "cantons": [
+    "BL"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1245781140
+  },
+  {
+   "name": "Ampferehöchi",
+   "lat": 47.518112,
+   "lon": 8.1239,
+   "ele": 579,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 29974104
+  },
+  {
+   "name": "Bözbergpass",
+   "lat": 47.480932,
+   "lon": 8.138747,
+   "ele": 569,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1851538764
+  },
+  {
+   "name": "Monte Ceneri",
+   "lat": 46.139177,
+   "lon": 8.907085,
+   "ele": 558,
+   "cantons": [
+    "TI"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1485137013
+  },
+  {
+   "name": "Siblingerhöhe",
+   "lat": 47.721895,
+   "lon": 8.504467,
+   "ele": 554,
+   "cantons": [
+    "SH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 9559110502
+  },
+  {
+   "name": "Mutschellenpass",
+   "lat": 47.362404,
+   "lon": 8.366992,
+   "ele": 551,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 436385442
+  },
+  {
+   "name": "Bürersteig Passhöhe",
+   "lat": 47.528359,
+   "lon": 8.159233,
+   "ele": 550,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 29835796
+  },
+  {
+   "name": "Grünegg Passhöhe",
+   "lat": 47.543472,
+   "lon": 8.179028,
+   "ele": 550,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 31317947
+  },
+  {
+   "name": "Belchen",
+   "lat": 47.555709,
+   "lon": 8.385749,
+   "ele": 526,
+   "cantons": [
+    "DE",
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 364621254
+  },
+  {
+   "name": "Siglistorfer",
+   "lat": 47.531748,
+   "lon": 8.372995,
+   "ele": 506,
+   "cantons": [
+    "AG",
+    "ZH"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 311087582
+  },
+  {
+   "name": "Zurzacherberg Passhöhe",
+   "lat": 47.575591,
+   "lon": 8.277517,
+   "ele": 490,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 6521394714
+  },
+  {
+   "name": "Col de la Tourne",
+   "lat": 46.98372,
+   "lon": 6.778859,
+   "ele": null,
+   "cantons": [
+    "NE"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 13346799842
+  },
+  {
+   "name": "Höhtal",
+   "lat": 47.486398,
+   "lon": 8.334778,
+   "ele": null,
+   "cantons": [
+    "AG"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 1166239425
+  },
+  {
+   "name": "Seuil d'Attalens",
+   "lat": 46.489388,
+   "lon": 6.852287,
+   "ele": null,
+   "cantons": [
+    "FR",
+    "VD"
+   ],
+   "connects": null,
+   "hairpins": null,
+   "maxGradientPct": null,
+   "climbLengthKm": null,
+   "osmId": 9461790079
+  }
+ ]
+}
