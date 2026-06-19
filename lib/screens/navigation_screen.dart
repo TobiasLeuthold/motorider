@@ -17,6 +17,7 @@ import '../services/ride_tracker.dart';
 import '../services/route_navigator.dart';
 import '../services/routing_service.dart';
 import '../services/tile_cache.dart';
+import '../services/voice_guidance.dart';
 import '../theme.dart';
 import 'plan_screen.dart' show kUserAgent, kOsmTiles;
 
@@ -65,6 +66,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
   NavGps? _gps;
   RouteSimulator? _sim;
 
+  // Spoken German turn-by-turn guidance. Audio is on by default; [_muted]
+  // inverts the UI's volume toggle.
+  final VoiceGuide _voice = VoiceGuide();
+  bool _muted = false;
+
   NavState _state = const NavState.initial();
   bool _simulating = false;
   bool _follow = true;
@@ -112,6 +118,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
     _nav = _buildNavigator(_geometry, widget.durationS, widget.maneuvers);
     _subscribeNav();
+    // Spin up the German TTS engine in the background. Speech still works if
+    // this fails (it re-inits lazily); the visual banner is unaffected.
+    _voice.init();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.move(_geometry.first, _navZoom);
     });
@@ -163,9 +172,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
       }
       _controller.moveAndRotate(displayPos, _zoom, _mapRotation);
     }
+    // Spoken guidance. While on-route, hand the active maneuver + live distance
+    // to the voice guide; it de-dupes the pre/now cues per maneuver internally
+    // (so nothing repeats every GPS tick) and resets when the next turn becomes
+    // active. Suppressed while off-route — the rider should rejoin first, not be
+    // told to take a turn they're no longer approaching.
+    if (!s.offRoute && !s.arrived) {
+      _voice.maybeAnnounce(s.nextManeuver, s.nextManeuverMeters);
+    }
     // Reached the destination → automatically end the tour. Fires once, on the
     // transition into "arrived".
     if (s.arrived && !wasArrived) {
+      _voice.announceArrival();
       _finishAutoTracking();
     }
     // Keep the "way back to the route" path in sync with the off-route state.
@@ -467,6 +485,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
   }
 
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    _voice.muted = _muted;
+    // Cut off any in-flight sentence the moment the rider mutes.
+    if (_muted) _voice.stop();
+  }
+
   void _recenter() {
     setState(() => _follow = true);
     final s = _state;
@@ -495,6 +520,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _gps?.dispose();
     _sim?.dispose();
     _nav.dispose();
+    // Stop any speech in flight and release the TTS engine.
+    _voice.dispose();
     _router.dispose();
     _tileProvider.dispose();
     super.dispose();
@@ -675,33 +702,36 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Floating controls above the stats bar: the dev-only GPS
-                    // simulator toggle (hidden in release — it's a testing aid,
-                    // not a riding control) on the left, and the "recenter" pill
-                    // (only while the rider has panned away) on the right.
-                    if (kDebugMode || !_follow)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(
-                          children: [
-                            if (kDebugMode)
-                              _SimToggleMini(
-                                simulating: _simulating,
-                                onTap: _toggleSimulate,
-                              ),
-                            const Spacer(),
-                            if (!_follow)
-                              FloatingActionButton.extended(
-                                heroTag: 'recenter',
-                                onPressed: _recenter,
-                                backgroundColor: AppColors.surface,
-                                foregroundColor: AppColors.accent,
-                                icon: const Icon(Icons.my_location_rounded),
-                                label: const Text('Zentrieren'),
-                              ),
+                    // Floating controls above the stats bar: the audio mute
+                    // toggle (always visible — a riding control) and the dev-only
+                    // GPS simulator toggle (hidden in release — a testing aid)
+                    // on the left, and the "recenter" pill (only while the rider
+                    // has panned away) on the right.
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
+                        children: [
+                          _MuteToggle(muted: _muted, onTap: _toggleMute),
+                          if (kDebugMode) ...[
+                            const SizedBox(width: 10),
+                            _SimToggleMini(
+                              simulating: _simulating,
+                              onTap: _toggleSimulate,
+                            ),
                           ],
-                        ),
+                          const Spacer(),
+                          if (!_follow)
+                            FloatingActionButton.extended(
+                              heroTag: 'recenter',
+                              onPressed: _recenter,
+                              backgroundColor: AppColors.surface,
+                              foregroundColor: AppColors.accent,
+                              icon: const Icon(Icons.my_location_rounded),
+                              label: const Text('Zentrieren'),
+                            ),
+                        ],
                       ),
+                    ),
                     _NavBottomBar(
                       remainingKm: s.remainingKm,
                       remainingSeconds: s.remainingSeconds,
@@ -911,6 +941,47 @@ class _SimToggleMini extends StatelessWidget {
               simulating ? Icons.stop_rounded : Icons.bug_report_rounded,
               color: color,
               size: 20,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Audio mute toggle for spoken turn-by-turn guidance. Audio is ON by default,
+/// so this shows a volume icon (accent) when unmuted and a muted icon when off.
+/// Styled to match the other floating navigation controls.
+class _MuteToggle extends StatelessWidget {
+  const _MuteToggle({required this.muted, required this.onTap});
+  final bool muted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = muted ? AppColors.textMuted : AppColors.accent;
+    return Tooltip(
+      message: muted ? 'Sprachansagen ein' : 'Sprachansagen aus',
+      child: Material(
+        color: muted
+            ? AppColors.surfaceHi
+            : AppColors.accent.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: muted ? AppColors.gridLine : AppColors.accent),
+            ),
+            child: Icon(
+              muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              color: color,
+              size: 22,
             ),
           ),
         ),
