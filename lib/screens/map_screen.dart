@@ -287,7 +287,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
                   if (nothingShown) const Center(child: _NothingHint()),
 
-                  // Map controls (compass / zoom / fit) + locate FAB.
+                  // Map controls (compass / zoom) + locate FAB.
                   Positioned(
                     right: 16,
                     bottom: 24,
@@ -311,15 +311,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           icon: Icons.remove_rounded,
                           tooltip: 'Rauszoomen',
                           onTap: () => _zoom(-1),
-                        ),
-                        const SizedBox(height: 8),
-                        _MapButton(
-                          icon: Icons.fit_screen_rounded,
-                          tooltip: 'Alle anzeigen',
-                          onTap: () {
-                            final pts = _visiblePoints(filteredFuel, rides);
-                            if (pts.isNotEmpty) _fitToPoints(pts);
-                          },
                         ),
                         const SizedBox(height: 10),
                         FloatingActionButton(
@@ -447,18 +438,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
     }
     return lines;
-  }
-
-  List<LatLng> _visiblePoints(List<FillUp> fuel, List<Ride> rides) {
-    final pts = <LatLng>[];
-    if (_showFuel) pts.addAll(fuel.map(_fuelLatLng));
-    if (_showRides) {
-      for (final r in rides) {
-        final path = _ridePaths[r.id];
-        if (path != null) pts.addAll(trackLatLngs(path));
-      }
-    }
-    return pts;
   }
 
   void _zoom(double delta) {
@@ -1287,7 +1266,7 @@ class _RideBadge extends StatelessWidget {
   }
 }
 
-/// A small square button used for the map controls (zoom / fit / compass).
+/// A small square button used for the map controls (zoom / compass).
 class _MapButton extends StatelessWidget {
   const _MapButton({required this.icon, required this.tooltip, this.onTap});
   final IconData icon;
