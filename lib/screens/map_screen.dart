@@ -6,8 +6,8 @@ import 'package:latlong2/latlong.dart';
 import '../main.dart';
 import '../models/fillup.dart';
 import '../models/ride.dart';
-import '../models/ride_point.dart';
 import '../services/location_service.dart';
+import '../stats/ride_track_color.dart';
 import '../theme.dart';
 import 'add_fillup_screen.dart';
 import 'ride_detail_screen.dart';
@@ -32,22 +32,13 @@ extension on _DatePreset {
       };
 }
 
-// Price-per-litre colour scale: cheap (green) → mid (amber) → pricey (red).
-const _cheapColor = Color(0xFF34D399);
-const _midColor = Color(0xFFFBBF24);
-const _priceyColor = Color(0xFFF87171);
-
-// Cool, distinct colour for ride tracks so they read clearly against the
-// warm orange fuel pins.
+// Cool, distinct colour for ride tracks in the plain (uniform) mode so they
+// read clearly against the warm orange fuel pins.
 const _rideColor = Color(0xFF38BDF8);
 
-/// Maps a normalised price `t` (0 = cheapest, 1 = priciest) to a marker colour.
-Color priceColor(double t) {
-  t = t.clamp(0.0, 1.0);
-  return t < 0.5
-      ? Color.lerp(_cheapColor, _midColor, t * 2)!
-      : Color.lerp(_midColor, _priceyColor, (t - 0.5) * 2)!;
-}
+/// Maps a normalised price `t` (0 = cheapest, 1 = priciest) to a marker colour
+/// on the shared green→amber→red scale ([colorOnScale]).
+Color priceColor(double t) => colorOnScale(t);
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, this.stream});
@@ -75,9 +66,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _showFuel = true;
   bool _showRides = true;
 
-  // Ride id → simplified track. Loaded lazily from the points table (rides can
-  // hold thousands of points; we downsample for the overview).
-  final Map<String, List<LatLng>> _ridePaths = {};
+  // How ride tracks are coloured (uniform / by a ride metric / speed heatmap).
+  RideColorMode _rideColorMode = RideColorMode.uniform;
+
+  // Ride id → simplified track (position + per-point speed). Loaded lazily from
+  // the points table (rides can hold thousands of points; we downsample for the
+  // overview, keeping the speed at each kept point for the heatmap).
+  final Map<String, List<TrackPoint>> _ridePaths = {};
   final Set<String> _ridePathLoading = {};
 
   // Default to Switzerland's geographic center.
@@ -125,6 +120,25 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     .addPostFrameCallback((_) => _ensureRidePaths(rides));
               }
 
+              // Colour-scale bounds for the active ride-colour mode, normalised
+              // over exactly the rides currently shown (date filter applied).
+              final rideMetric = _rideColorMode.metric;
+              final rideMetricRange = rideMetric == null
+                  ? null
+                  : metricRange(rides, rideMetric);
+              final heatRange = _rideColorMode == RideColorMode.speedHeatmap
+                  ? heatmapSpeedRange([
+                      for (final r in rides)
+                        if (_ridePaths[r.id] != null) _ridePaths[r.id]!,
+                    ])
+                  : null;
+              // A ride-colour legend only makes sense when rides are shown in a
+              // non-uniform mode and we actually have a spread to map onto.
+              final showRideLegend = _showRides &&
+                  rides.isNotEmpty &&
+                  ((rideMetricRange?.hasSpread ?? false) ||
+                      (heatRange?.hasSpread ?? false));
+
               // Frame the fuel points the first time they arrive.
               if (!_didInitialFit && _showFuel && filteredFuel.isNotEmpty) {
                 _didInitialFit = true;
@@ -171,18 +185,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       ),
                       if (_showRides)
                         PolylineLayer(
-                          polylines: [
-                            for (final r in rides)
-                              if ((_ridePaths[r.id]?.length ?? 0) >= 2)
-                                Polyline(
-                                  points: _ridePaths[r.id]!,
-                                  strokeWidth: 4,
-                                  color: _rideColor,
-                                  borderStrokeWidth: 1.5,
-                                  borderColor:
-                                      Colors.black.withValues(alpha: 0.3),
-                                ),
-                          ],
+                          polylines: _ridePolylines(
+                            rides,
+                            rideMetric,
+                            rideMetricRange,
+                            heatRange,
+                          ),
                         ),
                       MarkerLayer(
                         markers: [
@@ -211,7 +219,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                               if ((_ridePaths[r.id]?.length ?? 0) >= 2)
                                 Marker(
                                   point: _ridePaths[r.id]![
-                                      _ridePaths[r.id]!.length ~/ 2],
+                                          _ridePaths[r.id]!.length ~/ 2]
+                                      .pt,
                                   width: 30,
                                   height: 30,
                                   child: GestureDetector(
@@ -264,6 +273,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           showLegend: _showFuel && hasPriceSpread,
                           priceMin: pMin,
                           priceMax: pMax,
+                          rideColorMode: _rideColorMode,
+                          onRideColorMode: (m) =>
+                              setState(() => _rideColorMode = m),
+                          showRideColorPicker: _showRides,
+                          showRideLegend: showRideLegend,
+                          rideMetricRange: rideMetricRange,
+                          heatRange: heatRange,
                         ),
                       ),
                     ),
@@ -368,28 +384,69 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     for (final r in toLoad) {
       final pts = await rideRepo.getPoints(r.id);
       if (!mounted) return;
-      _ridePaths[r.id] = _downsample(pts);
+      // Decimate to ~400 points but keep the speed at each kept point so the
+      // overview can paint a per-segment speed heatmap (see [downsampleTrack]).
+      _ridePaths[r.id] = downsampleTrack(pts);
       _ridePathLoading.remove(r.id);
     }
     if (mounted) setState(() {});
   }
 
-  /// Stride-decimate a track down to ~400 points (always keeping the last one)
-  /// so the overview stays smooth even for multi-thousand-point rides.
-  List<LatLng> _downsample(List<RidePoint> pts) {
-    if (pts.isEmpty) return const [];
-    const target = 400;
-    final stride = (pts.length / target).ceil().clamp(1, 1 << 30);
-    final out = <LatLng>[
-      for (var i = 0; i < pts.length; i += stride) LatLng(pts[i].lat, pts[i].lon)
-    ];
-    final last = pts.last;
-    if (out.isEmpty ||
-        out.last.latitude != last.lat ||
-        out.last.longitude != last.lon) {
-      out.add(LatLng(last.lat, last.lon));
+  /// Build the polylines for the visible rides under the active colour mode:
+  ///   - [RideColorMode.uniform]   → one cool-blue line per track.
+  ///   - metric modes              → one line per track, coloured by where the
+  ///     ride's metric falls across the shown set.
+  ///   - [RideColorMode.speedHeatmap] → each track split into small segments
+  ///     coloured by the instantaneous speed there.
+  List<Polyline> _ridePolylines(
+    List<Ride> rides,
+    RideColorMetric? metric,
+    MetricRange? metricRangeForColor,
+    MetricRange? heatRange,
+  ) {
+    const border = 1.5;
+    final borderColor = Colors.black.withValues(alpha: 0.3);
+    final lines = <Polyline>[];
+    for (final r in rides) {
+      final track = _ridePaths[r.id];
+      if (track == null || track.length < 2) continue;
+
+      if (_rideColorMode == RideColorMode.speedHeatmap && heatRange != null) {
+        // Per-segment heatmap: merge consecutive same-colour segments into one
+        // polyline (sharing boundary points) so a track stays gap-free and we
+        // don't emit ~400 one-segment lines.
+        final colors = segmentSpeedColors(track, heatRange);
+        var segStart = 0;
+        for (var s = 0; s < colors.length; s++) {
+          final isLast = s == colors.length - 1;
+          if (!isLast && colors[s + 1] == colors[s]) continue;
+          lines.add(Polyline(
+            points: [
+              for (var j = segStart; j <= s + 1; j++) track[j].pt,
+            ],
+            strokeWidth: 4,
+            color: colors[s],
+            borderStrokeWidth: border,
+            borderColor: borderColor,
+          ));
+          segStart = s + 1;
+        }
+      } else {
+        // Whole-track single colour: by a ride metric, or the plain default.
+        final color = (metric != null && metricRangeForColor != null)
+            ? colorOnScale(
+                metricRangeForColor.normalize(metric.value(r)))
+            : _rideColor;
+        lines.add(Polyline(
+          points: [for (final t in track) t.pt],
+          strokeWidth: 4,
+          color: color,
+          borderStrokeWidth: border,
+          borderColor: borderColor,
+        ));
+      }
     }
-    return out;
+    return lines;
   }
 
   List<LatLng> _visiblePoints(List<FillUp> fuel, List<Ride> rides) {
@@ -398,7 +455,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (_showRides) {
       for (final r in rides) {
         final path = _ridePaths[r.id];
-        if (path != null) pts.addAll(path);
+        if (path != null) pts.addAll(trackLatLngs(path));
       }
     }
     return pts;
@@ -587,7 +644,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 }
 
-/// Top card: layer toggles, count, date presets, price filter, colour legend.
+/// Top card: layer toggles, count, date presets, price filter, ride-colour
+/// mode selector, and the colour legends.
 class _FilterCard extends StatelessWidget {
   const _FilterCard({
     required this.showFuel,
@@ -603,6 +661,12 @@ class _FilterCard extends StatelessWidget {
     required this.showLegend,
     required this.priceMin,
     required this.priceMax,
+    required this.rideColorMode,
+    required this.onRideColorMode,
+    required this.showRideColorPicker,
+    required this.showRideLegend,
+    required this.rideMetricRange,
+    required this.heatRange,
   });
 
   final bool showFuel;
@@ -618,6 +682,12 @@ class _FilterCard extends StatelessWidget {
   final bool showLegend;
   final double? priceMin;
   final double? priceMax;
+  final RideColorMode rideColorMode;
+  final ValueChanged<RideColorMode> onRideColorMode;
+  final bool showRideColorPicker;
+  final bool showRideLegend;
+  final MetricRange? rideMetricRange;
+  final MetricRange? heatRange;
 
   @override
   Widget build(BuildContext context) {
@@ -699,13 +769,93 @@ class _FilterCard extends StatelessWidget {
               ],
             ),
           ),
+          if (showRideColorPicker) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(Icons.palette_rounded,
+                    size: 14, color: AppColors.textMuted),
+                const SizedBox(width: 6),
+                const Text(
+                  'Touren färben nach',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final m in RideColorMode.values) ...[
+                    _Chip(
+                      label: m.label,
+                      selected: m == rideColorMode,
+                      onTap: () => onRideColorMode(m),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
           if (showLegend && priceMin != null && priceMax != null) ...[
             const SizedBox(height: 12),
-            _PriceLegend(min: priceMin!, max: priceMax!),
+            _GradientLegend(
+              minLabel: 'CHF ${NumberFormat('0.00').format(priceMin)}',
+              maxLabel: 'CHF ${NumberFormat('0.00').format(priceMax)}',
+              caption: 'Preis pro Liter',
+            ),
           ],
+          if (showRideLegend) ..._rideLegend(),
         ],
       ),
     );
+  }
+
+  /// The gradient legend for the active ride-colour mode (when there's a spread
+  /// to map onto). Heatmap and the uniform metric modes both read min→max along
+  /// the shared green→red scale.
+  List<Widget> _rideLegend() {
+    final nf = NumberFormat('0');
+    if (rideColorMode == RideColorMode.speedHeatmap && heatRange != null) {
+      return [
+        const SizedBox(height: 12),
+        _GradientLegend(
+          minLabel: '${nf.format(heatRange!.min)} km/h',
+          maxLabel: '${nf.format(heatRange!.max)} km/h',
+          caption: 'Tempo entlang der Tour',
+        ),
+      ];
+    }
+    final r = rideMetricRange;
+    final metric = rideColorMode.metric;
+    if (r == null || metric == null) return const [];
+    final (minLabel, maxLabel, caption) = switch (metric) {
+      RideColorMetric.avgSpeed => (
+          '${nf.format(r.min)} km/h',
+          '${nf.format(r.max)} km/h',
+          'Ø Tempo der Tour',
+        ),
+      RideColorMetric.maxSpeed => (
+          '${nf.format(r.min)} km/h',
+          '${nf.format(r.max)} km/h',
+          'Max Tempo der Tour',
+        ),
+      RideColorMetric.distance => (
+          '${NumberFormat('0.#').format(r.min)} km',
+          '${NumberFormat('0.#').format(r.max)} km',
+          'Distanz der Tour',
+        ),
+    };
+    return [
+      const SizedBox(height: 12),
+      _GradientLegend(minLabel: minLabel, maxLabel: maxLabel, caption: caption),
+    ];
   }
 }
 
@@ -808,33 +958,59 @@ class _Chip extends StatelessWidget {
   }
 }
 
-class _PriceLegend extends StatelessWidget {
-  const _PriceLegend({required this.min, required this.max});
-  final double min;
-  final double max;
+/// A reusable min↔max gradient legend along the shared green→red scale. Used
+/// for the fuel price legend and for whichever ride-colour mode is active, so
+/// they all read identically (green = low, red = high). An optional [caption]
+/// names what the gradient maps.
+class _GradientLegend extends StatelessWidget {
+  const _GradientLegend({
+    required this.minLabel,
+    required this.maxLabel,
+    this.caption,
+  });
+  final String minLabel;
+  final String maxLabel;
+  final String? caption;
 
   @override
   Widget build(BuildContext context) {
-    final nf = NumberFormat('0.00');
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('CHF ${nf.format(min)}',
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Container(
-            height: 8,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              gradient: const LinearGradient(
-                colors: [_cheapColor, _midColor, _priceyColor],
-              ),
+        if (caption != null) ...[
+          Text(
+            caption!,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textMuted,
             ),
           ),
+          const SizedBox(height: 4),
+        ],
+        Row(
+          children: [
+            Text(minLabel,
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                height: 8,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  gradient: const LinearGradient(
+                    colors: [scaleLow, scaleMid, scaleHigh],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(maxLabel,
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          ],
         ),
-        const SizedBox(width: 8),
-        Text('CHF ${nf.format(max)}',
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
       ],
     );
   }
