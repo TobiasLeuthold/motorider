@@ -230,6 +230,137 @@ void main() {
     });
   });
 
+  group('needsLeadIn', () {
+    const start = LatLng(46.0, 8.0);
+
+    test('no current location → no lead-in', () {
+      expect(needsLeadIn(null, start), isFalse);
+    });
+
+    test('within the threshold → no lead-in', () {
+      // ~30 m north of start (well under the 100 m default).
+      const near = LatLng(46.00027, 8.0);
+      expect(haversineMeters(near, start), lessThan(100));
+      expect(needsLeadIn(near, start), isFalse);
+    });
+
+    test('beyond the threshold → lead-in', () {
+      // ~330 m north of start.
+      const far = LatLng(46.003, 8.0);
+      expect(haversineMeters(far, start), greaterThan(100));
+      expect(needsLeadIn(far, start), isTrue);
+    });
+
+    test('honours a custom threshold', () {
+      const p = LatLng(46.0005, 8.0); // ~55 m away
+      expect(needsLeadIn(p, start, thresholdM: 50), isTrue);
+      expect(needsLeadIn(p, start, thresholdM: 75), isFalse);
+    });
+  });
+
+  group('prependLeadIn', () {
+    RouteResult res(
+      List<LatLng> geometry, {
+      required double distanceM,
+      required int durationS,
+      double? ascentM,
+      String profile = 'car-fast',
+      List<Maneuver> maneuvers = const [],
+    }) =>
+        RouteResult(
+          geometry: geometry,
+          distanceM: distanceM,
+          durationS: durationS,
+          ascentM: ascentM,
+          curviness: curvinessScore(geometry),
+          profile: profile,
+          maneuvers: maneuvers,
+        );
+
+    final planned = res(
+      const [LatLng(46.1, 8.0), LatLng(46.2, 8.0), LatLng(46.3, 8.0)],
+      distanceM: 2000,
+      durationS: 200,
+      ascentM: 30,
+      profile: 'car-eco',
+      maneuvers: const [Maneuver(geometryIndex: 1, command: 5)], // right at mid
+    );
+
+    test('prepends the connector, drops the shared start node, keeps the end',
+        () {
+      final leadIn = res(
+        // ends at the planned start (46.1, 8.0).
+        const [LatLng(46.0, 8.0), LatLng(46.05, 8.0), LatLng(46.1, 8.0)],
+        distanceM: 1100,
+        durationS: 90,
+        ascentM: 10,
+        maneuvers: const [Maneuver(geometryIndex: 1, command: 2)], // left
+      );
+
+      final r = prependLeadIn(leadIn, planned);
+
+      // 3 lead-in points minus the shared node + 3 planned points = 5.
+      expect(r.geometry, const [
+        LatLng(46.0, 8.0),
+        LatLng(46.05, 8.0),
+        LatLng(46.1, 8.0), // planned start, contributed once by the planned leg
+        LatLng(46.2, 8.0),
+        LatLng(46.3, 8.0),
+      ]);
+      // Destination (planned end) is preserved.
+      expect(r.geometry.last, planned.geometry.last);
+      expect(r.distanceM, 3100);
+      expect(r.durationS, 290);
+      expect(r.ascentM, 40);
+      expect(r.profile, 'mixed');
+    });
+
+    test('shifts planned maneuver indices and keeps the lead-in turn', () {
+      final leadIn = res(
+        const [LatLng(46.0, 8.0), LatLng(46.05, 8.0), LatLng(46.1, 8.0)],
+        distanceM: 1100,
+        durationS: 90,
+        maneuvers: const [Maneuver(geometryIndex: 1, command: 2)], // left at idx 1
+      );
+
+      final r = prependLeadIn(leadIn, planned);
+
+      // Lead-in's vertex 0 and 1 survive (vertex 2 = shared start, dropped),
+      // so the joined planned vertices start at offset 2.
+      // Lead-in turn at index 1 stays at 1; planned turn at index 1 → 2 + 1 = 3.
+      expect(r.maneuvers.map((m) => m.geometryIndex).toList(), [1, 3]);
+      expect(r.maneuvers.map((m) => m.command).toList(), [2, 5]);
+      for (final m in r.maneuvers) {
+        expect(m.geometryIndex, inInclusiveRange(0, r.geometry.length - 1));
+      }
+    });
+
+    test('a degenerate (single-point) lead-in is ignored', () {
+      final leadIn = res(
+        const [LatLng(46.1, 8.0)],
+        distanceM: 0,
+        durationS: 0,
+      );
+      final r = prependLeadIn(leadIn, planned);
+      expect(identical(r, planned), isTrue);
+    });
+
+    test('drops a lead-in maneuver that sits on the shared start node', () {
+      final leadIn = res(
+        const [LatLng(46.0, 8.0), LatLng(46.05, 8.0), LatLng(46.1, 8.0)],
+        distanceM: 1100,
+        durationS: 90,
+        // An "arrive at start" hint on the final (dropped) vertex must not leak
+        // into the joined route as a phantom turn.
+        maneuvers: const [Maneuver(geometryIndex: 2, command: 5)],
+      );
+      final r = prependLeadIn(leadIn, planned);
+      // Only the planned turn remains (shifted to 3).
+      expect(r.maneuvers.map((m) => m.geometryIndex).toList(), [3]);
+      expect(r.maneuvers.map((m) => m.command).toList(), [5]);
+    });
+  });
+
   test('routeLegs routes each leg with its own curviness profile', () async {
     // 3 waypoints → 2 legs. Leg 0 = fast (car-fast), leg 1 = extra (moped).
     final seenProfiles = <String>[];

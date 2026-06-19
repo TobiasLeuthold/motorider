@@ -103,6 +103,69 @@ RouteResult concatRouteLegs(List<RouteResult> legs) {
   );
 }
 
+/// Default distance (meters) the rider may be from a planned route's start
+/// before navigation inserts a "lead-in" leg that first guides them to the
+/// start. Below this the rider is treated as already at the start (GPS jitter,
+/// parked on the verge, etc.) and the planned route is navigated unchanged.
+const double kLeadInThresholdM = 100.0;
+
+/// Whether navigation should route the rider from [current] to the planned
+/// [start] before following the planned route. True only when [current] is a
+/// real, known position more than [thresholdM] away from the start.
+bool needsLeadIn(
+  LatLng? current,
+  LatLng start, {
+  double thresholdM = kLeadInThresholdM,
+}) {
+  if (current == null) return false;
+  return haversineMeters(current, start) > thresholdM;
+}
+
+/// Stitch a [leadIn] connector route (rider's current location → planned start)
+/// in front of the [planned] route, producing one continuous [RouteResult] that
+/// guidance, the map line and the maneuvers all follow seamlessly.
+///
+/// The [planned] route is preserved verbatim (its geometry, maneuvers and the
+/// final destination are unchanged); only the connector is prepended. Where the
+/// lead-in ends and the planned route begins they meet at the planned start, so
+/// the lead-in's last point (a near-duplicate of the planned first point) is
+/// dropped to avoid a zero-length segment, and the planned maneuvers are shifted
+/// to point at their new vertex indices in the joined line.
+RouteResult prependLeadIn(RouteResult leadIn, RouteResult planned) {
+  if (leadIn.geometry.length < 2) return planned;
+
+  // Drop the lead-in's final vertex (it coincides with the planned start) so the
+  // shared node appears once, then the whole planned line follows.
+  final lead = leadIn.geometry.sublist(0, leadIn.geometry.length - 1);
+  final geometry = <LatLng>[...lead, ...planned.geometry];
+  final offset = lead.length; // where the planned route's vertex 0 now lives
+
+  final maneuvers = <Maneuver>[
+    // Keep only the lead-in's real turns (a trailing "arrive at start" hint
+    // would falsely look like the destination); their indices are unaffected.
+    for (final m in leadIn.maneuvers)
+      if (m.geometryIndex < lead.length) m,
+    for (final m in planned.maneuvers)
+      Maneuver(
+        geometryIndex: offset + m.geometryIndex,
+        command: m.command,
+        exitNumber: m.exitNumber,
+      ),
+  ];
+
+  return RouteResult(
+    geometry: geometry,
+    distanceM: leadIn.distanceM + planned.distanceM,
+    durationS: leadIn.durationS + planned.durationS,
+    ascentM: planned.ascentM == null && leadIn.ascentM == null
+        ? null
+        : (leadIn.ascentM ?? 0) + (planned.ascentM ?? 0),
+    curviness: curvinessScore(geometry),
+    profile: leadIn.profile == planned.profile ? planned.profile : 'mixed',
+    maneuvers: maneuvers,
+  );
+}
+
 /// Thrown when a route cannot be computed (network down, no road found,
 /// server error). [message] is safe to show to the user.
 class RoutingException implements Exception {
