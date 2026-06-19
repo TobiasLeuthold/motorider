@@ -30,6 +30,7 @@ class NavState {
     this.remainingMeters = 0,
     this.remainingSeconds = 0,
     this.traveledFraction = 0,
+    this.alongMeters = 0,
     this.offRouteMeters = 0,
     this.offRoute = false,
     this.arrived = false,
@@ -52,6 +53,11 @@ class NavState {
   final double remainingMeters;
   final int remainingSeconds;
   final double traveledFraction; // 0..1 along the route
+
+  /// Distance from the route start to the snapped position, in meters. The live
+  /// split point for colouring already-passed vs. upcoming route.
+  final double alongMeters;
+
   final double offRouteMeters; // perpendicular distance to the route
   final bool offRoute;
   final bool arrived;
@@ -221,6 +227,7 @@ class RouteNavigator {
       remainingMeters: remaining,
       remainingSeconds: remainingSeconds,
       traveledFraction: frac,
+      alongMeters: along,
       offRouteMeters: snap.crossTrackMeters,
       offRoute: offRoute,
       arrived: arrived,

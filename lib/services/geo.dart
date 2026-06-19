@@ -152,6 +152,81 @@ SnapResult? snapToPath(LatLng p, List<LatLng> path, {List<double>? cumulative}) 
   );
 }
 
+/// The two halves of a polyline split at a point along its length: the part
+/// already behind the rider ([passed]) and the part still ahead ([upcoming]).
+/// The split point is the last vertex of [passed] AND the first vertex of
+/// [upcoming], so drawing both leaves no visual gap.
+class SplitPath {
+  const SplitPath({required this.passed, required this.upcoming});
+  final List<LatLng> passed;
+  final List<LatLng> upcoming;
+}
+
+/// Splits [path] at [alongMeters] (distance measured from the start along the
+/// line) into the already-passed and still-upcoming portions, used to colour
+/// the route behind the rider differently from the route ahead.
+///
+/// The exact split point — interpolated within whatever segment contains
+/// [alongMeters] — is included as the final vertex of [passed] and the first
+/// vertex of [upcoming], so the two polylines meet seamlessly. Robust at the
+/// extremes: at (or before) the start [passed] is empty and [upcoming] is the
+/// whole line; at (or past) the end the reverse. A split that lands exactly on
+/// an existing vertex divides there without inserting a duplicate point.
+SplitPath splitAlong(List<LatLng> path, double alongMeters,
+    {List<double>? cumulative}) {
+  if (path.length < 2) {
+    return SplitPath(passed: const [], upcoming: List.of(path));
+  }
+  final cum = cumulative ?? cumulativeMeters(path);
+  final total = cum.last;
+  final along = alongMeters.clamp(0.0, total);
+
+  // At the very start: nothing passed, everything ahead.
+  if (along <= 0) {
+    return SplitPath(passed: const [], upcoming: List.of(path));
+  }
+  // At the very end: everything passed, nothing ahead.
+  if (along >= total) {
+    return SplitPath(passed: List.of(path), upcoming: const []);
+  }
+
+  // Find the segment [i-1, i] that contains `along`.
+  var i = 1;
+  while (i < path.length - 1 && cum[i] < along) {
+    i++;
+  }
+  final segLen = cum[i] - cum[i - 1];
+  final t = segLen == 0 ? 0.0 : (along - cum[i - 1]) / segLen;
+  final a = path[i - 1], b = path[i];
+
+  // Snap to an existing vertex if the split lands on one (within float noise),
+  // so we don't insert a redundant duplicate point.
+  const eps = 1e-9;
+  if (t <= eps) {
+    // Split exactly at vertex i-1.
+    return SplitPath(
+      passed: path.sublist(0, i), // vertices 0..i-1
+      upcoming: path.sublist(i - 1), // vertices i-1..end
+    );
+  }
+  if (t >= 1 - eps) {
+    // Split exactly at vertex i.
+    return SplitPath(
+      passed: path.sublist(0, i + 1), // vertices 0..i
+      upcoming: path.sublist(i), // vertices i..end
+    );
+  }
+
+  final split = LatLng(
+    a.latitude + (b.latitude - a.latitude) * t,
+    a.longitude + (b.longitude - a.longitude) * t,
+  );
+  return SplitPath(
+    passed: [...path.sublist(0, i), split],
+    upcoming: [split, ...path.sublist(i)],
+  );
+}
+
 /// Geometric midpoint (by distance) of a polyline — the point half-way along
 /// its length. Used to place the "drag me to bend the route" handles.
 LatLng midpointAlong(List<LatLng> path) {

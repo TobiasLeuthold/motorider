@@ -532,6 +532,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
     final s = _state;
     final eta = DateTime.now().add(Duration(seconds: s.remainingSeconds));
     final puckPos = (s.offRoute ? s.raw : s.snapped) ?? s.snapped ?? s.raw;
+    // Split the route at the rider's position along the line so what's behind
+    // them is drawn dim and what's ahead stays bright.
+    final split = splitAlong(_geometry, s.alongMeters);
     return Scaffold(
       body: Stack(
         children: [
@@ -559,13 +562,28 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
               PolylineLayer(
                 polylines: [
-                  Polyline(
-                    points: _geometry,
-                    strokeWidth: 7,
-                    color: AppColors.accent,
-                    borderStrokeWidth: 2.5,
-                    borderColor: Colors.black.withValues(alpha: 0.4),
-                  ),
+                  // Already-passed portion (behind the rider along the route),
+                  // drawn dim. Includes the lead-in once passed. Painted first
+                  // so the bright "ahead" line below sits on top of it at the
+                  // shared split point.
+                  if (split.passed.length >= 2)
+                    Polyline(
+                      points: split.passed,
+                      strokeWidth: 7,
+                      color: _passedColor,
+                      borderStrokeWidth: 2.5,
+                      borderColor: Colors.black.withValues(alpha: 0.3),
+                    ),
+                  // Upcoming portion (ahead of the rider), in the bright
+                  // navigation colour — drawn on top so it stays dominant.
+                  if (split.upcoming.length >= 2)
+                    Polyline(
+                      points: split.upcoming,
+                      strokeWidth: 7,
+                      color: AppColors.accent,
+                      borderStrokeWidth: 2.5,
+                      borderColor: Colors.black.withValues(alpha: 0.4),
+                    ),
                   // Off-route: the quickest way back onto the planned route.
                   if (s.offRoute &&
                       _backToRoute != null &&
@@ -1109,6 +1127,11 @@ class _InfoBanner extends StatelessWidget {
 
 /// Colour of the "way back to the route" path + its rejoin dot.
 const _backColor = Color(0xFF22D3EE);
+
+/// Colour of the route portion the rider has already passed: a muted,
+/// desaturated slate so it clearly reads as "behind" next to the bright orange
+/// accent used for the route still ahead.
+const _passedColor = Color(0xFF6B7689);
 
 // High-contrast, fully opaque panel colours for navigation: translucent panels
 // wash out over a bright map in direct sun, so these are solid and near-black
