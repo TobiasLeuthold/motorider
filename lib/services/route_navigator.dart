@@ -126,9 +126,9 @@ class RouteNavigator {
   /// start. Maintained by *windowed* snapping (see [update]): each fix is matched
   /// near this value rather than to the globally nearest point on the line, so a
   /// route that revisits a point can't teleport progress to the later occurrence.
-  /// Seeded from the first fix.
+  /// Starts at 0; the first fix re-acquires here if navigation begins partway
+  /// along the route.
   double _along = 0;
-  bool _seeded = false;
 
   /// High-water mark of how far along the route the rider has genuinely
   /// reached, in meters. Only advances (never rewinds), so passing spatially
@@ -151,11 +151,6 @@ class RouteNavigator {
   /// global re-acquire instead.
   static const double _fwdWindowM = 350.0;
   static const double _backWindowM = 120.0;
-
-  /// Window used to seed progress from the very first fix. Anchored at the route
-  /// start so a round trip (start ≈ finish) seeds near 0 rather than snapping to
-  /// the spatially-identical finish.
-  static const double _seedWindowM = 250.0;
 
   /// Max cross-track-equivalent penalty (metres) applied to a windowed match
   /// whose segment points against the rider's direction of travel. It
@@ -191,44 +186,36 @@ class RouteNavigator {
     // that revisits a point (an out-and-back, or a loop that returns to an
     // earlier junction) the global nearest can latch onto that point's *later*
     // pass, teleporting progress forward and skipping the loop. Matching near
-    // where the rider actually is keeps them on the leg they're on; a global
-    // snap is kept only to re-acquire the line after a genuine detour.
-    final SnapResult snap;
-    if (!_seeded) {
-      // Seed from the start so the round-trip case (start ≈ finish — the first
-      // fix is as near the final segment as the first) anchors near 0, not the
-      // end. Fall back to a global snap if nothing sits near the start.
-      final seed = snapToPathWindowed(
-              fix.position, geometry, 0, _seedWindowM, cumulative: _cum) ??
-          snapToPath(fix.position, geometry, cumulative: _cum);
-      if (seed == null) return;
-      snap = seed;
-      _seeded = true;
-    } else {
-      // Rider's travel direction, used to tell apart the two passes of a retraced
-      // road: the GPS course if present, otherwise the bearing of the movement
-      // since the last fix. Null when stationary / on the first move — then the
-      // windowed snap is heading-agnostic.
-      final riderHeading = fix.headingDeg ?? _bearingFromLastRaw(fix.position);
-      final windowed = snapToPathWindowed(
-        fix.position,
-        geometry,
-        _along - _backWindowM,
-        _along + _fwdWindowM,
-        cumulative: _cum,
-        headingDeg: riderHeading,
-        headingPenaltyM: _headingPenaltyM,
-      );
-      final global = snapToPath(fix.position, geometry, cumulative: _cum);
-      if (global == null) return;
-      // Keep the sequential (windowed) match unless the rider has clearly moved
-      // beyond the window and the global match is decisively closer.
-      snap = (windowed == null ||
-              global.crossTrackMeters <
-                  windowed.crossTrackMeters - _reacquireMarginM)
-          ? global
-          : windowed;
-    }
+    // where the rider actually is keeps them on the leg they're on.
+    //
+    // A global snap is kept as a fallback, used when the rider has clearly moved
+    // beyond the window and it is decisively closer — a genuine detour, or the
+    // first fix when navigation starts partway along the route (the window is
+    // anchored at 0 until the first match lands, so a far start re-acquires here).
+    // This also defeats the round-trip trap (start ≈ finish): at the start the
+    // windowed match near 0 wins over a global snap that may sit on the final
+    // segment, so progress anchors at the start, not the end.
+    //
+    // The rider's travel direction tells apart the two passes of a retraced road:
+    // the GPS course if present, else the bearing of movement since the last fix.
+    // Null when stationary / on the first move — then the snap is heading-agnostic.
+    final riderHeading = fix.headingDeg ?? _bearingFromLastRaw(fix.position);
+    final windowed = snapToPathWindowed(
+      fix.position,
+      geometry,
+      _along - _backWindowM,
+      _along + _fwdWindowM,
+      cumulative: _cum,
+      headingDeg: riderHeading,
+      headingPenaltyM: _headingPenaltyM,
+    );
+    final global = snapToPath(fix.position, geometry, cumulative: _cum);
+    if (global == null) return;
+    final SnapResult snap = (windowed == null ||
+            global.crossTrackMeters <
+                windowed.crossTrackMeters - _reacquireMarginM)
+        ? global
+        : windowed;
     _along = snap.alongMeters.clamp(0.0, totalMeters);
 
     final along = _along;
