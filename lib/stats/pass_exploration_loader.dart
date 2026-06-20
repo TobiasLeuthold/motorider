@@ -42,6 +42,9 @@ class PassExplorationLoader {
       rideId: rideId,
       points: [for (final p in pts) LatLng(p.lat, p.lon)],
       times: [for (final p in pts) p.ts],
+      // Recorded GPS speeds feed the preferred per-crossing average speed; the
+      // detector falls back to corridor distance ÷ time where they're missing.
+      speedsMs: [for (final p in pts) p.speedMs],
     );
   }
 }
