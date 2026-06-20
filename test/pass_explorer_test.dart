@@ -367,15 +367,20 @@ void main() {
   });
 
   group('dataset parsing', () {
-    test('parsePasses reads name/lat/lon/ele/cantons and optional fields', () {
+    test('parsePasses reads the full v2 schema (segment fields incl.)', () {
       const json = '''
       {
         "_attribution": "Pass data © OpenStreetMap contributors (ODbL).",
         "passes": [
           {"name":"Furkapass","lat":46.5727,"lon":8.4152,"ele":2429,
            "cantons":["VS","UR"],"connects":["Realp","Gletsch"],
-           "hairpins":10,"curvinessScore":385.1,
-           "maxGradientPct":null,"climbLengthKm":null,"osmId":123},
+           "hairpins":24,"curvinessScore":385.1,
+           "maxGradientPct":13.0,"climbLengthKm":null,"osmId":123,
+           "summitEle":2429,
+           "start":{"lat":46.61,"lon":8.36,"ele":1757},
+           "end":{"lat":46.59,"lon":8.49,"ele":1538},
+           "heightGainM":672,"netDiffM":-219,"lengthKm":25.7,
+           "geometry":[[46.61,8.36],[46.5727,8.4152],[46.59,8.49]]},
           {"name":"Col de la Tourne","lat":46.9837,"lon":6.7789,"ele":null,
            "cantons":["NE"],"connects":null}
         ]
@@ -383,16 +388,43 @@ void main() {
       ''';
       final passes = parsePasses(json);
       expect(passes, hasLength(2));
-      expect(passes[0].name, 'Furkapass');
-      expect(passes[0].ele, 2429);
-      expect(passes[0].cantons, ['VS', 'UR']);
-      expect(passes[0].connects, ['Realp', 'Gletsch']);
-      expect(passes[0].hairpins, 10);
-      expect(passes[0].curvinessScore, 385.1);
-      expect(passes[1].ele, isNull);
-      expect(passes[1].connects, isNull);
-      expect(passes[1].hairpins, isNull);
-      expect(passes[1].curvinessScore, isNull);
+      final f = passes[0];
+      expect(f.name, 'Furkapass');
+      expect(f.ele, 2429);
+      expect(f.summitEle, 2429);
+      expect(f.cantons, ['VS', 'UR']);
+      expect(f.connects, ['Realp', 'Gletsch']);
+      expect(f.hairpins, 24);
+      expect(f.curvinessScore, 385.1);
+      expect(f.maxGradientPct, 13.0);
+      expect(f.start!.ele, 1757);
+      expect(f.end!.lat, 46.59);
+      expect(f.heightGainM, 672);
+      expect(f.netDiffM, -219);
+      expect(f.lengthKm, 25.7);
+      expect(f.geometry, hasLength(3));
+      expect(f.geometry.first.latitude, 46.61);
+      expect(f.geometry.last.longitude, 8.49);
+      // Sparse pass: every optional/segment field is null/empty, no throw.
+      final t = passes[1];
+      expect(t.ele, isNull);
+      expect(t.summitEle, isNull);
+      expect(t.connects, isNull);
+      expect(t.start, isNull);
+      expect(t.end, isNull);
+      expect(t.heightGainM, isNull);
+      expect(t.geometry, isEmpty);
+    });
+
+    test('summitEle falls back to ele and vice-versa', () {
+      // ele only → summitEle mirrors it.
+      final a = parsePasses(
+          '{"passes":[{"name":"A","lat":46.5,"lon":8.4,"cantons":["UR"],"ele":2000}]}');
+      expect(a.single.summitEle, 2000);
+      // summitEle only → ele mirrors it.
+      final b = parsePasses(
+          '{"passes":[{"name":"B","lat":46.5,"lon":8.4,"cantons":["UR"],"summitEle":1500}]}');
+      expect(b.single.ele, 1500);
     });
 
     test('parseAttribution extracts the ODbL string', () {
@@ -408,15 +440,66 @@ void main() {
     // the package root) so a broken/mangled asset fails CI.
     final raw = File('assets/data/passes_ch.json').readAsStringSync();
     final passes = parsePasses(raw);
+    Pass byName(String n) =>
+        passes.firstWhere((p) => p.name == n, orElse: () => throw 'missing $n');
 
-    test('has 99 passes', () {
-      expect(passes, hasLength(99));
+    // 41 canonical Swiss road passes that MUST be present (by exact name).
+    const mustHave = <String>[
+      'Pass Umbrail - Giogo di Santa Maria',
+      'Nufenenpass / Passo della Novena',
+      'Col du Grand Saint-Bernard',
+      'Furkapass',
+      'Grimselpass',
+      'Sustenpass',
+      'Passo del San Gottardo',
+      'Passo del Bernina',
+      'Flüelapass',
+      'Albulapass',
+      'Julierpass',
+      'Passo dello Spluga - Splügenpass',
+      'Passo del San Bernardino',
+      'Klausenpass',
+      'Oberalppass',
+      'Passo del Lucomagno',
+      'Simplonpass',
+      'Malojapass',
+      'Pass dal Fuorn',
+      'Col de la Forclaz',
+      'Col du Pillon',
+      'Col des Mosses',
+      'Col de la Croix',
+      'Col du Sanetsch',
+      'Grosse Scheidegg',
+      'Jaunpass',
+      'Brünigpass',
+      'Wolfgangpass',
+      'Lenzerheide / Passhöhe',
+      'Pragelpass',
+      'Ibergeregg',
+      'Schwägalp Passhöhe',
+      'Sattelegg',
+      'Vue des Alpes',
+      'Col du Marchairuz',
+      'Saanenmöser',
+      'Schallenbergpass',
+      'Gurnigel / Gurnigelpass',
+      'Glaubenbielen / Panoramastrasse',
+      'Glaubenbergpass',
+    ];
+
+    test('holds a curated set of ~80–120 passes', () {
+      // Not pinned to an exact count (curation may shift), but guards against a
+      // truncated or runaway asset.
+      expect(passes.length, inInclusiveRange(60, 130),
+          reason: 'curated count was ${passes.length}');
     });
 
-    test('attribution credits OpenStreetMap / ODbL', () {
+    test('attribution credits OpenStreetMap / ODbL and notes derivation', () {
       final attr = parseAttribution(raw);
       expect(attr, contains('OpenStreetMap'));
       expect(attr, contains('ODbL'));
+      // v2 attribution must flag the OSM/SRTM-derived geometry & fields.
+      expect(attr.toLowerCase(), contains('srtm'));
     });
 
     test('every pass has a name, ≥1 canton, and coords inside Switzerland', () {
@@ -429,54 +512,140 @@ void main() {
       }
     });
 
-    test('elevations, where present, are plausible for Swiss passes', () {
-      for (final p in passes) {
-        if (p.ele == null) continue;
-        expect(p.ele, inInclusiveRange(300, 2900), reason: 'ele ${p.name}');
-      }
-    });
-
-    test('the iconic high passes are present at sane elevations', () {
-      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
-      expect(byName('Furkapass').ele, closeTo(2429, 30));
-      expect(byName('Grimselpass').ele, closeTo(2164, 30));
-      expect(byName('Sustenpass').ele, closeTo(2224, 30));
-      expect(byName('Passo del San Gottardo').ele, closeTo(2106, 30));
-      // A spread of the must-have names exists.
+    test('every canonical Swiss road pass is present', () {
       final names = passes.map((p) => p.name).toSet();
-      for (final n in const [
-        'Klausenpass',
-        'Julierpass',
-        'Passo del Bernina',
-        'Flüelapass',
-        'Oberalppass',
-        'Simplonpass',
-      ]) {
-        expect(names, contains(n));
+      for (final n in mustHave) {
+        expect(names, contains(n), reason: 'must-have pass missing: $n');
       }
     });
 
-    test('names are unique except for the two distinct Col de la Croix cols',
-        () {
-      final names = passes.map((p) => p.name).toList();
-      final dupes = <String>{};
+    test('pass names are unique', () {
       final seen = <String>{};
-      for (final n in names) {
-        if (!seen.add(n)) dupes.add(n);
+      final dupes = <String>{};
+      for (final p in passes) {
+        if (!seen.add(p.name)) dupes.add(p.name);
       }
-      expect(dupes, {'Col de la Croix'});
+      expect(dupes, isEmpty, reason: 'duplicate names: $dupes');
     });
 
-    // ── computed curve / hairpin data (tools/compute_pass_curves.dart) ──
-    // These guard the OSM-derived hairpin + curviness fields: that they're
-    // populated for the whole dataset, sit in a sane range, and rank the
-    // famously serpentine passes well above the gentle ones. Bounds are
-    // deliberately loose so minor OSM edits don't break CI, but tight enough
-    // that an empty/garbage recompute (all-null, or 0 for Furka) fails.
+    test('elevations are present and plausible for Swiss passes', () {
+      for (final p in passes) {
+        expect(p.ele, isNotNull, reason: 'ele for ${p.name}');
+        expect(p.ele, inInclusiveRange(400, 2700), reason: 'ele ${p.name}');
+        // ele mirrors summitEle.
+        expect(p.summitEle, p.ele, reason: 'summitEle != ele for ${p.name}');
+      }
+    });
+
+    test('the iconic high passes sit at sane elevations', () {
+      // SRTM-derived summits, so allow ~40 m slack vs. the surveyed col height.
+      expect(byName('Furkapass').ele, closeTo(2429, 40));
+      expect(byName('Grimselpass').ele, closeTo(2164, 40));
+      expect(byName('Sustenpass').ele, closeTo(2224, 40));
+      expect(byName('Passo del San Gottardo').ele, closeTo(2106, 40));
+      expect(byName('Nufenenpass / Passo della Novena').ele, closeTo(2478, 40));
+    });
+
+    // ── segment foundation (tools/compute_pass_data.dart) ──
+    // Every pass is now a road segment with two feet, a summit, a climb and a
+    // drawable polyline. These guard that the derived data is well-formed.
+
+    test('every pass has both feet, a summit, and a positive height gain', () {
+      for (final p in passes) {
+        expect(p.start, isNotNull, reason: 'start for ${p.name}');
+        expect(p.end, isNotNull, reason: 'end for ${p.name}');
+        expect(p.summitEle, isNotNull, reason: 'summitEle for ${p.name}');
+        expect(p.heightGainM, isNotNull, reason: 'heightGainM for ${p.name}');
+        // A real pass climbs; allow a small floor but reject zero/negative.
+        expect(p.heightGainM, greaterThanOrEqualTo(80),
+            reason: 'heightGain ${p.name} = ${p.heightGainM}');
+        // The summit is at least as high as either foot (it's the top).
+        expect(p.summitEle!, greaterThanOrEqualTo(p.start!.ele! - 5),
+            reason: 'summit below start foot for ${p.name}');
+        expect(p.summitEle!, greaterThanOrEqualTo(p.end!.ele! - 5),
+            reason: 'summit below end foot for ${p.name}');
+        // heightGain == summit minus the lower foot (within rounding).
+        final lower =
+            p.start!.ele! < p.end!.ele! ? p.start!.ele! : p.end!.ele!;
+        expect((p.heightGainM! - (p.summitEle! - lower)).abs(),
+            lessThanOrEqualTo(2),
+            reason: 'heightGain mismatch for ${p.name}');
+      }
+    });
+
+    test('netDiff equals end minus start foot elevation', () {
+      for (final p in passes) {
+        expect(p.netDiffM, isNotNull, reason: 'netDiffM for ${p.name}');
+        expect((p.netDiffM! - (p.end!.ele! - p.start!.ele!)).abs(),
+            lessThanOrEqualTo(2),
+            reason: 'netDiff mismatch for ${p.name}');
+      }
+    });
+
+    test('every segment has a plausible length (2–60 km)', () {
+      for (final p in passes) {
+        expect(p.lengthKm, isNotNull, reason: 'lengthKm for ${p.name}');
+        expect(p.lengthKm, inInclusiveRange(2.0, 60.0),
+            reason: 'lengthKm ${p.name} = ${p.lengthKm}');
+      }
+    });
+
+    test('geometry has ≥2 points, endpoints match the feet, and nears the col',
+        () {
+      for (final p in passes) {
+        final g = p.geometry;
+        expect(g.length, greaterThanOrEqualTo(2),
+            reason: 'geometry too short for ${p.name}');
+        expect(g.length, lessThanOrEqualTo(60),
+            reason: 'geometry too long for ${p.name}: ${g.length}');
+        // First vertex == start foot, last == end foot (rounded to 5 dp).
+        expect(g.first.latitude, closeTo(p.start!.lat, 1e-4),
+            reason: 'geom start lat ${p.name}');
+        expect(g.first.longitude, closeTo(p.start!.lon, 1e-4),
+            reason: 'geom start lon ${p.name}');
+        expect(g.last.latitude, closeTo(p.end!.lat, 1e-4),
+            reason: 'geom end lat ${p.name}');
+        expect(g.last.longitude, closeTo(p.end!.lon, 1e-4),
+            reason: 'geom end lon ${p.name}');
+        // The polyline passes near the col (anchor of crossing detection):
+        // some vertex within 250 m of (lat,lon).
+        final col = p.latLng;
+        final nearCol =
+            g.any((v) => haversineMeters(v, col) <= 250);
+        expect(nearCol, isTrue,
+            reason: 'geometry never approaches the col for ${p.name}');
+      }
+    });
+
+    test('maxGradient, where present, is a sane road grade (0–20 %)', () {
+      for (final p in passes) {
+        final g = p.maxGradientPct;
+        if (g == null) continue;
+        expect(g, inInclusiveRange(0, 20), reason: 'maxGrad ${p.name} = $g');
+      }
+    });
+
+    test('a few segments are dimensionally sane (spot-check)', () {
+      // Furka, Grimsel, Splügen, Gotthard: real climbs of many hundreds of m
+      // over several km. Loose bounds — guard against a degenerate segment.
+      for (final n in const [
+        'Furkapass',
+        'Grimselpass',
+        'Passo dello Spluga - Splügenpass',
+        'Passo del San Gottardo',
+      ]) {
+        final p = byName(n);
+        expect(p.heightGainM, greaterThanOrEqualTo(400),
+            reason: '$n climb too small');
+        expect(p.lengthKm, greaterThanOrEqualTo(6.0),
+            reason: '$n segment too short');
+      }
+    });
+
+    // ── hairpin / curviness data (computed over the whole segment) ──
 
     test('hairpins is populated for the vast majority of passes', () {
       final withHairpins = passes.where((p) => p.hairpins != null).length;
-      // Aim is "large majority"; a few cols may resist analysis.
       expect(withHairpins, greaterThanOrEqualTo((passes.length * 0.9).floor()),
           reason: 'only $withHairpins/${passes.length} have hairpins');
     });
@@ -496,18 +665,16 @@ void main() {
       for (final p in passes) {
         final c = p.curvinessScore;
         if (c == null) continue;
-        // °/km: 0 for a straight road, into the high hundreds for a serpentine.
         expect(c, inInclusiveRange(0, 1500), reason: 'curviness ${p.name} = $c');
       }
     });
 
     test('famously hairpin-heavy passes have plausibly high counts', () {
-      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
-      // Floors set well below the computed values (which range ~10–39) so the
-      // test is robust, while still failing if the detector regresses to ~0.
-      expect(byName('Furkapass').hairpins, greaterThanOrEqualTo(6),
+      // Over the full segment the counts are higher than the old col-only ones;
+      // floors set well below the computed values so OSM edits don't break CI.
+      expect(byName('Furkapass').hairpins, greaterThanOrEqualTo(8),
           reason: 'Furka should be very hairpinny');
-      expect(byName('Grimselpass').hairpins, greaterThanOrEqualTo(6));
+      expect(byName('Grimselpass').hairpins, greaterThanOrEqualTo(8));
       expect(byName('Passo del San Bernardino').hairpins,
           greaterThanOrEqualTo(15));
       expect(byName('Passo dello Spluga - Splügenpass').hairpins,
@@ -518,12 +685,9 @@ void main() {
     });
 
     test('gentle passes have far fewer hairpins than the serpentine ones', () {
-      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
-      // Smooth / fast / low passes: a handful at most.
       expect(byName('Simplonpass').hairpins, lessThanOrEqualTo(6),
           reason: 'Simplon is a fast sweeping pass, not hairpinny');
       expect(byName('Brünigpass').hairpins, lessThanOrEqualTo(8));
-      expect(byName('Albispass').hairpins, lessThanOrEqualTo(8));
       // And the ordering that motivates the whole feature holds.
       expect(byName('Passo del San Bernardino').hairpins!,
           greaterThan(byName('Brünigpass').hairpins!));
@@ -533,7 +697,6 @@ void main() {
 
     test('curviness tracks hairpins: serpentine passes out-curve gentle ones',
         () {
-      Pass byName(String n) => passes.firstWhere((p) => p.name == n);
       expect(byName('Passo del San Bernardino').curvinessScore!,
           greaterThan(byName('Simplonpass').curvinessScore!));
     });

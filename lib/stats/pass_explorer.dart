@@ -22,12 +22,37 @@ const double kTriggerRadiusM = 250.0;
 /// trigger radius or the detector would never disarm.
 const double kRearmRadiusM = 3000.0;
 
+/// One end (a "foot") of a pass road segment: a point with its elevation.
+class PassPoint {
+  const PassPoint({required this.lat, required this.lon, this.ele});
+
+  final double lat;
+  final double lon;
+
+  /// Elevation in metres, or null if not sourced.
+  final int? ele;
+
+  LatLng get latLng => LatLng(lat, lon);
+
+  factory PassPoint.fromJson(Map<String, dynamic> j) => PassPoint(
+        lat: (j['lat'] as num).toDouble(),
+        lon: (j['lon'] as num).toDouble(),
+        ele: j['ele'] == null ? null : (j['ele'] as num).toInt(),
+      );
+}
+
 /// One Swiss mountain pass loaded from `assets/data/passes_ch.json`.
+///
+/// A pass is a road *segment*: it runs from [start] (the foot of the climb on
+/// one side), up over the col, down to [end] (the foot on the other side).
 ///
 /// [lat]/[lon] are the col node itself (from OpenStreetMap) — crossing
 /// detection is anchored to this point, so it has to be the real pass. The
-/// optional facts are null when not confidently sourced; they are never
-/// fabricated.
+/// segment-derived fields ([start]/[end]/[summitEle]/[heightGainM]/[netDiffM]/
+/// [lengthKm]/[maxGradientPct]/[geometry]/[hairpins]/[curvinessScore]) come
+/// from OSM road geometry + SRTM elevation (see `tools/compute_pass_data.dart`)
+/// and are approximate. Optional facts are null when not confidently sourced;
+/// they are never fabricated.
 class Pass {
   const Pass({
     required this.name,
@@ -41,6 +66,13 @@ class Pass {
     this.maxGradientPct,
     this.climbLengthKm,
     this.osmId,
+    this.start,
+    this.end,
+    this.summitEle,
+    this.heightGainM,
+    this.netDiffM,
+    this.lengthKm,
+    this.geometry = const [],
   });
 
   final String name;
@@ -51,28 +83,54 @@ class Pass {
   /// touches, e.g. `['UR', 'VS']`.
   final List<String> cantons;
 
-  /// Elevation of the col in metres, or null if OSM had none.
+  /// Elevation of the col in metres, or null if unknown. Mirrors [summitEle]
+  /// (kept under the historical `ele` name so existing code/stats keep working).
   final int? ele;
 
   /// The two end places the pass road connects, e.g. `['Realp', 'Gletsch']`.
   final List<String>? connects;
 
-  /// Number of hairpin switchbacks on the pass road, computed from OSM road
-  /// geometry (see `tools/compute_pass_curves.dart`). Approximate; null when
+  /// Number of hairpin switchbacks over the whole segment, computed from OSM
+  /// road geometry (see `tools/compute_pass_data.dart`). Approximate; null when
   /// the road geometry couldn't be analysed.
   final int? hairpins;
 
   /// "Kurvigkeit" — degrees of heading change per kilometre along the pass
   /// road (see [curvinessScore] in `services/geo.dart`). ~0 for a dead-straight
-  /// road, into the hundreds for a serpentine. Computed from the same geometry
-  /// as [hairpins]; null when unavailable.
+  /// road, into the hundreds for a serpentine. Computed over the whole segment;
+  /// null when unavailable.
   final double? curvinessScore;
 
+  /// Steepest sustained gradient along the segment, in percent (approximate,
+  /// from SRTM); null when not computed.
   final double? maxGradientPct;
+
+  /// Deprecated alias retained for compatibility; prefer [lengthKm]. Always
+  /// null in the v2 dataset.
   final double? climbLengthKm;
 
   /// OSM node id of the col, for traceability back to the source.
   final int? osmId;
+
+  /// The two feet of the pass segment (valley-floor ends of the climb).
+  final PassPoint? start;
+  final PassPoint? end;
+
+  /// Elevation of the col / summit in metres (same value as [ele]).
+  final int? summitEle;
+
+  /// Climb height: the summit minus the LOWER of the two feet, in metres.
+  final int? heightGainM;
+
+  /// Net elevation difference end-minus-start, in metres (signed).
+  final int? netDiffM;
+
+  /// Road distance start → over the col → end, in kilometres.
+  final double? lengthKm;
+
+  /// The segment road polyline (col + both feet preserved), downsampled to a
+  /// handful of dozen points for drawing. Empty when not available.
+  final List<LatLng> geometry;
 
   LatLng get latLng => LatLng(lat, lon);
 
@@ -87,18 +145,41 @@ class Pass {
     double? toD(Object? v) => v == null ? null : (v as num).toDouble();
     int? toI(Object? v) => v == null ? null : (v as num).toInt();
 
+    PassPoint? toPoint(Object? v) =>
+        v is Map ? PassPoint.fromJson(v.cast<String, dynamic>()) : null;
+
+    // geometry is a list of [lat, lon] pairs.
+    List<LatLng> toGeom(Object? v) {
+      if (v is! List) return const [];
+      final out = <LatLng>[];
+      for (final e in v) {
+        if (e is List && e.length >= 2 && e[0] is num && e[1] is num) {
+          out.add(LatLng((e[0] as num).toDouble(), (e[1] as num).toDouble()));
+        }
+      }
+      return out;
+    }
+
+    final ele = toI(j['ele']) ?? toI(j['summitEle']);
     return Pass(
       name: j['name'] as String,
       lat: (j['lat'] as num).toDouble(),
       lon: (j['lon'] as num).toDouble(),
       cantons: strList(j['cantons']) ?? const [],
-      ele: toI(j['ele']),
+      ele: ele,
       connects: strList(j['connects']),
       hairpins: toI(j['hairpins']),
       curvinessScore: toD(j['curvinessScore']),
       maxGradientPct: toD(j['maxGradientPct']),
       climbLengthKm: toD(j['climbLengthKm']),
       osmId: toI(j['osmId']),
+      start: toPoint(j['start']),
+      end: toPoint(j['end']),
+      summitEle: toI(j['summitEle']) ?? ele,
+      heightGainM: toI(j['heightGainM']),
+      netDiffM: toI(j['netDiffM']),
+      lengthKm: toD(j['lengthKm']),
+      geometry: toGeom(j['geometry']),
     );
   }
 }
