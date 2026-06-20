@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../main.dart';
-import '../models/ride.dart';
 import '../stats/pass_exploration_loader.dart';
 import '../stats/pass_explorer.dart';
+import '../stats/pass_summary.dart';
 import '../theme.dart';
 import '../widgets/seg_toggle.dart';
-import 'ride_detail_screen.dart';
+import 'pass_detail_screen.dart';
+
+/// Which top-level view of the Pässe screen is shown.
+enum _View { all, mine }
 
 /// How the Pässe list is ordered.
 enum _Sort { explored, ele, name, canton }
@@ -26,7 +29,8 @@ enum _Filter { all, done, open }
 
 /// Pässe — Swiss mountain-pass exploration log. Computes which dataset passes
 /// the rider has crossed (over all recorded rides' full GPS tracks) off the
-/// build thread and renders progress + a sortable/filterable list.
+/// build thread and renders, behind a top "Alle Pässe / Meine Pässe" toggle,
+/// either a sortable/filterable pass list or a rewarding personal-stats view.
 class PassesScreen extends StatefulWidget {
   const PassesScreen({super.key, this.loader});
 
@@ -42,6 +46,7 @@ class _PassesScreenState extends State<PassesScreen> {
   late Future<PassExplorationResult> _future;
   String? _attribution;
 
+  _View _view = _View.all;
   _Sort _sort = _Sort.explored;
   _Filter _filter = _Filter.all;
 
@@ -85,53 +90,71 @@ class _PassesScreenState extends State<PassesScreen> {
 
   Widget _content(PassExplorationResult res) {
     final stats = res.stats;
-    final items = _sortedFiltered(res.progress);
 
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _Headline(stats: stats)),
-        SliverToBoxAdapter(child: _StatsStrip(stats: stats)),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: _Controls(
-              sort: _sort,
-              filter: _filter,
-              onSort: (s) => setState(() => _sort = s),
-              onFilter: (f) => setState(() => _filter = f),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: SegToggle<_View>(
+              value: _view,
+              options: const [
+                (_View.all, 'Alle Pässe'),
+                (_View.mine, 'Meine Pässe'),
+              ],
+              onChanged: (v) => setState(() => _view = v),
             ),
           ),
         ),
-        if (items.isEmpty)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 32, 16, 32),
-              child: Center(
-                child: Text(
-                  'Keine Pässe in dieser Ansicht.',
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
-              ),
-            ),
-          )
+        if (_view == _View.all)
+          ..._allPassesSlivers(res)
         else
-          SliverList.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, i) {
-              final p = items[i];
-              return Padding(
-                padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 0, 16, 0),
-                child: _PassTile(
-                  progress: p,
-                  onTap: p.crossed ? () => _showCrossingRides(p) : null,
-                ),
-              );
-            },
-          ),
+          SliverToBoxAdapter(child: _MineView(res: res, onOpenPass: _openPass)),
         SliverToBoxAdapter(child: _AttributionFooter(text: _attribution)),
       ],
     );
+  }
+
+  List<Widget> _allPassesSlivers(PassExplorationResult res) {
+    final items = _sortedFiltered(res.progress);
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: _Controls(
+            sort: _sort,
+            filter: _filter,
+            onSort: (s) => setState(() => _sort = s),
+            onFilter: (f) => setState(() => _filter = f),
+          ),
+        ),
+      ),
+      if (items.isEmpty)
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, 32, 16, 32),
+            child: Center(
+              child: Text(
+                'Keine Pässe in dieser Ansicht.',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+          ),
+        )
+      else
+        SliverList.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (context, i) {
+            final p = items[i];
+            return Padding(
+              padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 0, 16, 0),
+              child: _PassTile(progress: p, onTap: () => _openPass(p)),
+            );
+          },
+        ),
+    ];
   }
 
   List<PassProgress> _sortedFiltered(List<PassProgress> all) {
@@ -168,15 +191,9 @@ class _PassesScreenState extends State<PassesScreen> {
     return filtered;
   }
 
-  void _showCrossingRides(PassProgress p) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppColors.surface,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => _CrossingRidesSheet(progress: p),
+  void _openPass(PassProgress p) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PassDetailScreen(progress: p)),
     );
   }
 }
@@ -271,25 +288,49 @@ class _ProgressBar extends StatelessWidget {
   }
 }
 
-// ─────────────────────────── Stats strip ───────────────────────────
+// ───────────────────────── Meine Pässe (overview) ─────────────────────────
 
-class _StatsStrip extends StatelessWidget {
-  const _StatsStrip({required this.stats});
-  final CollectionStats stats;
+/// The rewarding personal-stats view: a hero "fastest crossing" banner, a grid
+/// of dopamine stats (metres collected, hairpins ridden, favourite pass,
+/// highest explored, time on passes), and a full per-canton progress board.
+class _MineView extends StatelessWidget {
+  const _MineView({required this.res, required this.onOpenPass});
+  final PassExplorationResult res;
+  final ValueChanged<PassProgress> onOpenPass;
 
   @override
   Widget build(BuildContext context) {
+    final stats = res.stats;
     final dec = NumberFormat.decimalPattern('de_CH');
-    final highest = stats.highestCrossed?.pass;
+
+    if (stats.explored == 0) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(16, 24, 16, 24),
+        child: _MineEmpty(),
+      );
+    }
+
+    final fastest = stats.fastestCrossing;
     final fav = stats.mostCrossed;
+    final highest = stats.highestCrossed;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (fastest != null) ...[
+            _FastestBanner(
+              fastest: fastest,
+              onTap: () => _openFastest(fastest),
+            ),
+            const SizedBox(height: 12),
+          ],
+          // Dopamine grid.
           Row(
             children: [
               Expanded(
-                child: _MiniStat(
+                child: _StatCard(
                   icon: Icons.terrain_rounded,
                   label: 'Höhenmeter gesammelt',
                   value: '${dec.format(stats.metresCollected)} m',
@@ -297,7 +338,7 @@ class _StatsStrip extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _MiniStat(
+                child: _StatCard(
                   icon: Icons.u_turn_right_rounded,
                   label: 'Kehren gefahren',
                   value: stats.totalHairpins > 0
@@ -311,57 +352,231 @@ class _StatsStrip extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _MiniStat(
-                  icon: Icons.landscape_rounded,
-                  label: 'Höchster erkundet',
-                  value: highest == null
-                      ? '–'
-                      : '${highest.ele ?? '?'} m',
-                  sub: highest?.name,
-                  tint: AppColors.accentSoft,
+                child: _StatCard(
+                  icon: Icons.timer_outlined,
+                  label: 'Zeit auf Pässen',
+                  value: formatTotalTimeOnPasses(stats.totalTimeOnPassesS),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _MiniStat(
-                  icon: Icons.favorite_rounded,
-                  label: 'Lieblingspass',
-                  value: fav == null ? '–' : '${fav.count}×',
-                  sub: fav?.pass.name,
-                  tint: AppColors.accentSoft,
+                child: _StatCard(
+                  icon: Icons.map_rounded,
+                  label: 'Kantone befahren',
+                  value: '${cantonsWithProgress(stats.perCanton)}',
                 ),
               ),
             ],
           ),
-          if (stats.perCanton.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          if (fav != null)
+            _HighlightCard(
+              icon: Icons.favorite_rounded,
+              label: 'Lieblingspass',
+              title: fav.pass.name,
+              trailing: '${fav.count}×',
+              onTap: () => onOpenPass(fav),
+            ),
+          if (highest != null) ...[
             const SizedBox(height: 10),
-            _CantonStrip(perCanton: stats.perCanton),
+            _HighlightCard(
+              icon: Icons.landscape_rounded,
+              label: 'Höchster erkundet',
+              title: highest.pass.name,
+              trailing:
+                  highest.pass.ele == null ? '–' : '${highest.pass.ele} m',
+              onTap: () => onOpenPass(highest),
+            ),
           ],
+          const SizedBox(height: 20),
+          if (stats.perCanton.isNotEmpty) ...[
+            const _SectionLabel(
+              icon: Icons.flag_rounded,
+              text: 'Fortschritt nach Kanton',
+            ),
+            const SizedBox(height: 10),
+            _CantonBoard(perCanton: stats.perCanton),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _openFastest(FastestCrossing fastest) {
+    // Jump to the detail of the pass that holds the fastest crossing.
+    final match =
+        res.progress.where((p) => p.pass.name == fastest.pass.name);
+    if (match.isNotEmpty) onOpenPass(match.first);
+  }
+}
+
+class _MineEmpty extends StatelessWidget {
+  const _MineEmpty();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceHi,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.terrain_rounded,
+                color: AppColors.accentSoft, size: 28),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Noch keine Pässe erobert',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Sobald du deinen ersten Pass überquerst, sammeln sich hier deine '
+            'Höhenmeter, Kehren und Bestzeiten.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+          ),
         ],
       ),
     );
   }
 }
 
-class _MiniStat extends StatelessWidget {
-  const _MiniStat({
+/// The trophy card: your single fastest pass crossing anywhere.
+class _FastestBanner extends StatelessWidget {
+  const _FastestBanner({required this.fastest, required this.onTap});
+  final FastestCrossing fastest;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final dateFmt = DateFormat('dd.MM.yyyy');
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 14, 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.accent.withValues(alpha: 0.30),
+                AppColors.surfaceHi,
+              ],
+            ),
+            border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(Icons.bolt_rounded,
+                    color: AppColors.accent, size: 28),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Schnellste Passüberquerung',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.accentSoft,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      fastest.pass.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    Text(
+                      dateFmt.format(fastest.at),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${fastest.avgSpeedKmh.round()}',
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.accent,
+                      letterSpacing: -1,
+                    ),
+                  ),
+                  const Text(
+                    'km/h',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.accentSoft,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A compact dopamine stat card (icon, big value, label).
+class _StatCard extends StatelessWidget {
+  const _StatCard({
     required this.icon,
     required this.label,
     required this.value,
-    this.sub,
-    this.tint,
   });
   final IconData icon;
   final String label;
   final String value;
-  final String? sub;
-  final Color? tint;
 
   @override
   Widget build(BuildContext context) {
-    final color = tint ?? AppColors.accent;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -370,123 +585,224 @@ class _MiniStat extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 15, color: color),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
+          Icon(icon, size: 18, color: AppColors.accentSoft),
+          const SizedBox(height: 10),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: AppColors.text,
-              fontSize: 18,
+              fontSize: 20,
               fontWeight: FontWeight.w800,
-              letterSpacing: -0.3,
+              letterSpacing: -0.4,
             ),
           ),
-          if (sub != null)
-            Text(
-              sub!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
             ),
+          ),
         ],
       ),
     );
   }
 }
 
-/// Horizontal scroll of per-canton done/total chips with a tiny progress bar.
-class _CantonStrip extends StatelessWidget {
-  const _CantonStrip({required this.perCanton});
-  final Map<String, CantonProgress> perCanton;
+/// A wide highlight card (favourite / highest) that opens the pass detail.
+class _HighlightCard extends StatelessWidget {
+  const _HighlightCard({
+    required this.icon,
+    required this.label,
+    required this.title,
+    required this.trailing,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final String title;
+  final String trailing;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    // Sort: most-explored cantons first, then alphabetically.
-    final entries = perCanton.entries.toList()
-      ..sort((a, b) {
-        final c = b.value.done.compareTo(a.value.done);
-        return c != 0 ? c : a.key.compareTo(b.key);
-      });
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: entries.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final e = entries[i];
-          return _CantonChip(code: e.key, prog: e.value);
-        },
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border:
+                Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: AppColors.accent, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: AppColors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.text,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                trailing,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.accent,
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded,
+                  color: AppColors.textMuted, size: 20),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class _CantonChip extends StatelessWidget {
-  const _CantonChip({required this.code, required this.prog});
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: AppColors.text),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: AppColors.text,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Full per-canton progress board: one row per canton with a done/total tally
+/// and a progress bar, sorted by most-explored first.
+class _CantonBoard extends StatelessWidget {
+  const _CantonBoard({required this.perCanton});
+  final Map<String, CantonProgress> perCanton;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = perCanton.entries.toList()
+      ..sort((a, b) {
+        final c = b.value.done.compareTo(a.value.done);
+        if (c != 0) return c;
+        final pc = b.value.percent.compareTo(a.value.percent);
+        return pc != 0 ? pc : a.key.compareTo(b.key);
+      });
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < entries.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 1,
+                color: AppColors.gridLine.withValues(alpha: 0.5),
+              ),
+            _CantonRow(code: entries[i].key, prog: entries[i].value),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CantonRow extends StatelessWidget {
+  const _CantonRow({required this.code, required this.prog});
   final String code;
   final CantonProgress prog;
 
   @override
   Widget build(BuildContext context) {
     final done = prog.done > 0;
-    return Container(
-      width: 78,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: done
-              ? AppColors.accent.withValues(alpha: 0.4)
-              : AppColors.gridLine.withValues(alpha: 0.6),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                code,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: done ? AppColors.text : AppColors.textMuted,
-                ),
+          SizedBox(
+            width: 34,
+            child: Text(
+              code,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: done ? AppColors.text : AppColors.textMuted,
               ),
-              Text(
-                '${prog.done}/${prog.total}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ],
+            ),
           ),
-          _ProgressBar(value: prog.percent / 100.0, height: 4),
+          Expanded(
+            child: _ProgressBar(value: prog.percent / 100.0, height: 7),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 40,
+            child: Text(
+              '${prog.done}/${prog.total}',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: done ? AppColors.text : AppColors.textMuted,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -607,7 +923,7 @@ class _PassTile extends StatelessWidget {
     ].join(' · ');
 
     return Opacity(
-      opacity: crossed ? 1.0 : 0.55,
+      opacity: crossed ? 1.0 : 0.7,
       child: Material(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -676,25 +992,22 @@ class _PassTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (crossed) ...[
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (progress.lastDate != null)
-                        Text(
-                          dateFmt.format(progress.lastDate!),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
-                          ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (crossed && progress.lastDate != null)
+                      Text(
+                        dateFmt.format(progress.lastDate!),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
                         ),
-                      if (onTap != null)
-                        const Icon(Icons.chevron_right_rounded,
-                            color: AppColors.textMuted, size: 20),
-                    ],
-                  ),
-                ],
+                      ),
+                    const Icon(Icons.chevron_right_rounded,
+                        color: AppColors.textMuted, size: 20),
+                  ],
+                ),
               ],
             ),
           ),
@@ -742,83 +1055,6 @@ class _StatusBadge extends StatelessWidget {
               )
             : const Icon(Icons.check_rounded,
                 size: 19, color: AppColors.accent),
-      ),
-    );
-  }
-}
-
-// ──────────────────────── Crossing-rides sheet ────────────────────────
-
-class _CrossingRidesSheet extends StatelessWidget {
-  const _CrossingRidesSheet({required this.progress});
-  final PassProgress progress;
-
-  @override
-  Widget build(BuildContext context) {
-    final dateFmt = DateFormat('EEEE, dd.MM.yyyy', 'de');
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              progress.pass.name,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: AppColors.text,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '${progress.count}× erkundet',
-              style: const TextStyle(fontSize: 13, color: AppColors.accent),
-            ),
-            const SizedBox(height: 14),
-            if (progress.rideIds.isEmpty)
-              const Text(
-                'Keine verknüpften Fahrten.',
-                style: TextStyle(color: AppColors.textMuted),
-              )
-            else
-              ...progress.rideIds.map((rideId) {
-                final matches = rideRepo.latest.where((r) => r.id == rideId);
-                final Ride? ride = matches.isEmpty ? null : matches.first;
-                final title = ride?.title;
-                final subtitle = ride != null
-                    ? dateFmt.format(ride.startedAt)
-                    : 'Fahrt';
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.route_rounded,
-                      color: AppColors.accent),
-                  title: Text(
-                    (title != null && title.isNotEmpty) ? title : 'Ausfahrt',
-                    style: const TextStyle(
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  subtitle: Text(
-                    subtitle,
-                    style: const TextStyle(color: AppColors.textMuted),
-                  ),
-                  trailing: const Icon(Icons.chevron_right_rounded,
-                      color: AppColors.textMuted),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => RideDetailScreen(rideId: rideId),
-                      ),
-                    );
-                  },
-                );
-              }),
-          ],
-        ),
       ),
     );
   }

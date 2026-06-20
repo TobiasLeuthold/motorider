@@ -12,6 +12,7 @@ import '../stats/pass_explorer.dart';
 import '../stats/ride_track_color.dart';
 import '../theme.dart';
 import 'add_fillup_screen.dart';
+import 'pass_detail_screen.dart';
 import 'ride_detail_screen.dart';
 
 /// Time windows offered by the date filter.
@@ -1462,6 +1463,22 @@ class _PassSheet extends StatelessWidget {
                 'erscheint in Gold.',
                 style: TextStyle(fontSize: 13, color: AppColors.textMuted),
               ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PassDetailScreen(progress: progress),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.read_more_rounded, size: 20),
+                label: const Text('Details ansehen'),
+              ),
+            ),
           ],
         ),
       ),
