@@ -113,16 +113,84 @@ SnapResult? snapToPath(LatLng p, List<LatLng> path, {List<double>? cumulative}) 
     );
   }
   final cum = cumulative ?? cumulativeMeters(path);
+  // Unrestricted (global) search over every segment, no heading bias.
+  return _snapCore(p, path, cum, double.negativeInfinity, double.infinity,
+      null, 0);
+}
+
+/// Like [snapToPath] but only considers segments whose along-range overlaps the
+/// window `[minAlong, maxAlong]` (metres from the route start). Returns null if
+/// the window covers no segment.
+///
+/// This is what keeps live navigation honest on a route that revisits a point —
+/// an out-and-back, a figure-of-eight, or a loop that returns to an earlier
+/// junction. A plain [snapToPath] picks the globally nearest point, so when the
+/// rider is physically *at* such a shared point the match can latch onto its
+/// *later* occurrence on the line, teleporting progress forward and making the
+/// app think the loop is already done. Restricting the search to the stretch of
+/// route around where the rider actually is keeps the match on the leg they're
+/// genuinely on. The caller ([RouteNavigator]) falls back to a global snap to
+/// re-acquire the line after a real detour.
+///
+/// [headingDeg] + [headingPenaltyM] disambiguate an *exact* retrace (an
+/// out-and-back along the same road, where both occurrences of every point are
+/// equidistant) using the rider's direction of travel: a candidate segment whose
+/// bearing disagrees with [headingDeg] is penalised up to [headingPenaltyM]
+/// (full penalty when it points the opposite way), so the occurrence the rider is
+/// actually travelling along wins. With no heading this is a pure nearest-point
+/// search — direction is the only signal that separates the two passes, so where
+/// it's unavailable the caller keeps it a plain windowed snap.
+SnapResult? snapToPathWindowed(
+  LatLng p,
+  List<LatLng> path,
+  double minAlong,
+  double maxAlong, {
+  List<double>? cumulative,
+  double? headingDeg,
+  double headingPenaltyM = 0,
+}) {
+  if (path.isEmpty) return null;
+  if (path.length == 1) return snapToPath(p, path, cumulative: cumulative);
+  final cum = cumulative ?? cumulativeMeters(path);
+  return _snapCore(
+    p,
+    path,
+    cum,
+    math.min(minAlong, maxAlong),
+    math.max(minAlong, maxAlong),
+    headingDeg,
+    headingPenaltyM,
+  );
+}
+
+/// Shared projection core for [snapToPath] / [snapToPathWindowed]. Considers
+/// only segments whose along-range intersects `[loAlong, hiAlong]` (pass
+/// ±infinity for an unrestricted search) and selects the one minimising
+/// cross-track distance plus a heading-disagreement penalty (see the heading
+/// params on [snapToPathWindowed]). Returns null when no segment qualifies.
+SnapResult? _snapCore(
+  LatLng p,
+  List<LatLng> path,
+  List<double> cum,
+  double loAlong,
+  double hiAlong,
+  double? headingDeg,
+  double headingPenaltyM,
+) {
   final mPerLat = 111320.0;
   final mPerLon = 111320.0 * math.cos(_deg2rad(p.latitude));
   double px(LatLng q) => (q.longitude - p.longitude) * mPerLon;
   double py(LatLng q) => (q.latitude - p.latitude) * mPerLat;
 
+  final useHeading = headingDeg != null && headingPenaltyM > 0;
+  var bestCost = double.infinity;
   var bestD = double.infinity;
-  var bestSeg = 0;
+  var bestSeg = -1;
   var bestT = 0.0;
   var bestAlong = 0.0;
   for (var i = 0; i < path.length - 1; i++) {
+    // Skip segments lying entirely outside the along-window.
+    if (cum[i + 1] < loAlong || cum[i] > hiAlong) continue;
     final ax = px(path[i]), ay = py(path[i]);
     final bx = px(path[i + 1]), by = py(path[i + 1]);
     final dx = bx - ax, dy = by - ay;
@@ -132,13 +200,26 @@ SnapResult? snapToPath(LatLng p, List<LatLng> path, {List<double>? cumulative}) 
     t = t.clamp(0.0, 1.0);
     final cx = ax + t * dx, cy = ay + t * dy;
     final d = math.sqrt(cx * cx + cy * cy);
-    if (d < bestD) {
+    final along = cum[i] + t * (cum[i + 1] - cum[i]);
+    // Penalise candidates whose segment points against the rider's heading, so an
+    // exact retrace resolves to the leg they're actually travelling. (1 - cos Δ)/2
+    // is 0 when aligned, 1 when opposite. No effect without a heading or with a
+    // single candidate.
+    var cost = d;
+    if (useHeading) {
+      final segBearing = bearingDeg(path[i], path[i + 1]);
+      final disagree = (1 - math.cos(_deg2rad(segBearing - headingDeg))) / 2;
+      cost += headingPenaltyM * disagree;
+    }
+    if (cost < bestCost) {
+      bestCost = cost;
       bestD = d;
       bestSeg = i;
       bestT = t;
-      bestAlong = cum[i] + t * (cum[i + 1] - cum[i]);
+      bestAlong = along;
     }
   }
+  if (bestSeg < 0) return null;
   final a = path[bestSeg], b = path[bestSeg + 1];
   final snap = LatLng(
     a.latitude + (b.latitude - a.latitude) * bestT,
@@ -224,6 +305,47 @@ SplitPath splitAlong(List<LatLng> path, double alongMeters,
   return SplitPath(
     passed: [...path.sublist(0, i), split],
     upcoming: [split, ...path.sublist(i)],
+  );
+}
+
+/// Three coloured bands for the live navigation line, split at the rider's
+/// position [alongMeters] and again [lookaheadMeters] further on:
+///
+///  * [passed]   — route already behind the rider (drawn dim),
+///  * [near]     — the immediate [lookaheadMeters] of route just ahead, drawn in
+///                 a stand-out colour so that where the line crosses or doubles
+///                 back on itself the rider can see which way to go *next*,
+///  * [far]      — the remainder of the route beyond the highlighted stretch.
+///
+/// The bands share their boundary points (built from [splitAlong], which leaves
+/// no gap), so drawing all three is seamless. Near the destination [far] is
+/// empty and [near] is whatever route remains.
+class NavBands {
+  const NavBands({required this.passed, required this.near, required this.far});
+  final List<LatLng> passed;
+  final List<LatLng> near;
+  final List<LatLng> far;
+}
+
+/// Build the [NavBands] for [path] given the rider's progress [alongMeters] and
+/// how much of the road ahead to highlight ([lookaheadMeters], e.g. ~1 km).
+NavBands navBands(
+  List<LatLng> path,
+  double alongMeters,
+  double lookaheadMeters, {
+  List<double>? cumulative,
+}) {
+  final cum = cumulative ?? cumulativeMeters(path);
+  final split = splitAlong(path, alongMeters, cumulative: cum);
+  if (split.upcoming.length < 2 || lookaheadMeters <= 0) {
+    return NavBands(passed: split.passed, near: split.upcoming, far: const []);
+  }
+  // Re-split the upcoming part: its first [lookaheadMeters] become the highlight.
+  final ahead = splitAlong(split.upcoming, lookaheadMeters);
+  return NavBands(
+    passed: split.passed,
+    near: ahead.passed,
+    far: ahead.upcoming,
   );
 }
 

@@ -250,6 +250,95 @@ void main() {
       }
     });
   });
+
+  group('RouteNavigator self-revisiting routes', () {
+    test('out-and-back keeps progress moving forward on the return leg', () {
+      // Ride out to a turnaround and straight back along the SAME road, so every
+      // point is visited twice. A global nearest snap tie-breaks the return
+      // fixes onto the OUTBOUND occurrence, mirroring reported progress back down
+      // toward zero so the rider "never arrives". Windowed matching + forward
+      // bias must track the return forward to the finish.
+      final route = _densify(const [
+        LatLng(46.0, 8.00), // A
+        LatLng(46.0, 8.03), // T (turnaround)
+        LatLng(46.0, 8.00), // back to A
+      ], stepM: 20);
+      final cum = cumulativeMeters(route);
+      final total = cum.last;
+      final nav = RouteNavigator(
+          geometry: route, totalDurationS: 1200, arriveRadiusM: 60);
+
+      var prev = 0.0;
+      var rewind = 0.0;
+      var maxFrac = 0.0;
+      for (var d = 0.0; d <= total; d += 25) {
+        nav.update(NavFix(position: _pointAlong(route, cum, d)));
+        final along = nav.state.alongMeters;
+        if (prev - along > rewind) rewind = prev - along;
+        prev = along;
+        if (nav.state.traveledFraction > maxFrac) {
+          maxFrac = nav.state.traveledFraction;
+        }
+      }
+      nav.update(NavFix(position: route.last));
+
+      expect(rewind, lessThan(40),
+          reason: 'progress mirrored backward on the return leg');
+      expect(nav.state.alongMeters, closeTo(total, 80));
+      expect(maxFrac, greaterThan(0.9),
+          reason: 'never progressed past the turnaround');
+    });
+
+    test('lollipop loop is tracked through the revisited junction', () {
+      // Stem A→P, a loop P→Q→R→S→P that returns to P, then a continuation P→B.
+      // P is on the line twice (~1.5 km in and ~5.3 km in). Reaching P the first
+      // time must NOT teleport progress across the loop — the exact bug the rider
+      // hit: "as soon as I reach that point it assumed I already did the loop".
+      const a = LatLng(46.00, 8.00);
+      const p = LatLng(46.00, 8.02);
+      final route = _densify(const [
+        LatLng(46.00, 8.00), // A
+        LatLng(46.00, 8.02), // P  (loop entry)
+        LatLng(46.01, 8.02), // Q
+        LatLng(46.01, 8.03), // R
+        LatLng(46.00, 8.03), // S
+        LatLng(46.00, 8.02), // P  (loop close — revisited)
+        LatLng(45.99, 8.02), // B  (continue south)
+      ], stepM: 20);
+      final cum = cumulativeMeters(route);
+      final total = cum.last;
+      final stemLen = haversineMeters(a, p);
+      final nav = RouteNavigator(geometry: route, totalDurationS: 1200);
+
+      var prev = 0.0;
+      var maxJump = 0.0;
+      double? alongAtFirstP;
+      for (var d = 0.0; d <= total; d += 25) {
+        final pt = _pointAlong(route, cum, d);
+        nav.update(NavFix(position: pt));
+        final along = nav.state.alongMeters;
+        if (along - prev > maxJump) maxJump = along - prev;
+        prev = along;
+        // Capture reported progress the first time the rider is physically at P.
+        if (alongAtFirstP == null &&
+            d > stemLen - 60 &&
+            haversineMeters(pt, p) < 25) {
+          alongAtFirstP = along;
+        }
+      }
+      nav.update(NavFix(position: route.last));
+
+      // No single 25 m step leaps a loop's worth forward (~3.7 km here).
+      expect(maxJump, lessThan(200),
+          reason: 'progress teleported across the loop');
+      // First visit to P reads the first-pass distance, not the post-loop one.
+      expect(alongAtFirstP, isNotNull);
+      expect(alongAtFirstP!, closeTo(stemLen, 150),
+          reason: 'first arrival at P snapped to its later occurrence');
+      // And the whole lollipop completes.
+      expect(nav.state.alongMeters, closeTo(total, 60));
+    });
+  });
 }
 
 /// Subdivide a polyline so consecutive points are at most [stepM] apart — a
