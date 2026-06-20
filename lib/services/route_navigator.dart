@@ -37,6 +37,7 @@ class NavState {
     this.nextManeuver,
     this.nextManeuverMeters = 0,
     this.courseDeg,
+    this.estimated = false,
   });
 
   const NavState.initial() : this();
@@ -73,6 +74,13 @@ class NavState {
   /// snapped position (smooth); off-route it's the rider's GPS course.
   final double? courseDeg;
 
+  /// True when this position was *dead-reckoned* — advanced along the route at
+  /// the last known speed because real GPS fixes stopped arriving (a tunnel,
+  /// a deep cutting, …) rather than measured from a fresh fix. The UI uses it
+  /// to show a "position estimated" hint; everything else treats it like a
+  /// normal on-route state so guidance keeps flowing.
+  final bool estimated;
+
   double get remainingKm => remainingMeters / 1000.0;
 }
 
@@ -89,6 +97,8 @@ class RouteNavigator {
     this.offRouteStreakNeeded = 3,
     this.arriveRadiusM = 35,
     this.arriveProgressFraction = 0.9,
+    this.coastMinSpeedKmh = 8,
+    this.coastMaxSeconds = 240,
   }) : _cum = cumulativeMeters(geometry) {
     for (final m in maneuvers) {
       if (m.isTurn && m.geometryIndex >= 0 && m.geometryIndex < _cum.length) {
@@ -116,6 +126,17 @@ class RouteNavigator {
   /// fires there. Default 0.9 (≈ last tenth of the route).
   final double arriveProgressFraction;
 
+  /// Below this last-known speed (km/h) we do NOT dead-reckon through a GPS
+  /// gap. A rider stopped at a tunnel mouth or a red light should keep a
+  /// frozen puck, not be coasted forward into a turn they haven't taken.
+  final double coastMinSpeedKmh;
+
+  /// Hard ceiling (seconds) on how long a single GPS gap is dead-reckoned.
+  /// Position error grows the longer we coast blind; past this we hold the last
+  /// estimate instead of drifting indefinitely. Tunnels are usually far shorter,
+  /// and a constant-speed line follows them well, so this rarely bites.
+  final double coastMaxSeconds;
+
   final List<double> _cum;
   final List<_TurnAt> _turns = [];
   int _offStreak = 0;
@@ -139,6 +160,22 @@ class RouteNavigator {
   /// un-fires (see where it's set), which keeps a round-trip finish stable even
   /// though its closing fix is spatially ambiguous with the start.
   bool _arrived = false;
+
+  // ── Dead reckoning through GPS gaps (tunnels) ──
+  /// Last real on-route speed (km/h); drives how fast we coast through a gap.
+  double? _lastSpeedKmh;
+  /// Synthetic along-route position while coasting; seeded from the last real
+  /// fix and advanced by [coast].
+  double _coastAlong = 0;
+  /// How long the current uninterrupted GPS gap has been dead-reckoned, in
+  /// seconds. Reset to zero on every real [update].
+  double _coastedSeconds = 0;
+  /// True once at least one real fix has been processed — there's nothing to
+  /// coast from before that.
+  bool _hadFix = false;
+  /// Whether the last real fix was off-route. We never coast off-route: the
+  /// route line isn't where the rider is, so advancing along it would be wrong.
+  bool _lastOffRoute = false;
 
   final _controller = StreamController<NavState>.broadcast();
   NavState _state = const NavState.initial();
@@ -219,6 +256,14 @@ class RouteNavigator {
     if (course != null) _lastCourse = course;
     _lastRaw = fix.position;
 
+    // A real fix landed: reset the dead-reckoning state so a later GPS gap
+    // coasts forward from *here* at *this* speed.
+    _hadFix = true;
+    _lastOffRoute = offRoute;
+    _coastAlong = along;
+    _coastedSeconds = 0;
+    if (fix.speedKmh != null) _lastSpeedKmh = fix.speedKmh;
+
     _emit(NavState(
       raw: fix.position,
       snapped: snap.point,
@@ -235,6 +280,94 @@ class RouteNavigator {
       nextManeuverMeters: nextManeuverMeters,
       courseDeg: course,
     ));
+  }
+
+  /// Advance the rider's *estimated* position along the route while real GPS
+  /// fixes are missing — the tunnel case. Instead of letting the puck freeze
+  /// (which makes turn-by-turn impossible to follow), we coast forward along the
+  /// route at the last known speed and keep emitting [NavState]s, flagged
+  /// [NavState.estimated], so distance/ETA/turn cues all keep updating.
+  ///
+  /// Pure compute: the screen drives this on a ~1 Hz timer once it notices fixes
+  /// have stopped. It is a deliberate no-op (the puck simply holds its last
+  /// position) when there's nothing safe to extrapolate from:
+  ///   - no real fix yet, or the destination is already reached;
+  ///   - the last fix was off-route (the line isn't where the rider is);
+  ///   - the rider was last seen essentially stopped (< [coastMinSpeedKmh]) —
+  ///     a red light or tunnel mouth, where inventing motion would be wrong;
+  ///   - we've already coasted past [coastMaxSeconds] (bound the blind drift).
+  ///
+  /// A returning real fix snaps everything back to truth via [update].
+  void coast(Duration elapsed) {
+    if (geometry.length < 2 || !_hadFix || _arrived || _lastOffRoute) return;
+    final v = _lastSpeedKmh;
+    if (v == null || v < coastMinSpeedKmh) return;
+
+    _coastedSeconds += elapsed.inMilliseconds / 1000.0;
+    if (_coastedSeconds <= coastMaxSeconds) {
+      final stepM = (v / 3.6) * (elapsed.inMilliseconds / 1000.0);
+      _coastAlong = (_coastAlong + stepM).clamp(0.0, totalMeters);
+    }
+
+    final along = _coastAlong;
+    final remaining = (totalMeters - along).clamp(0.0, totalMeters);
+    final frac = totalMeters == 0 ? 1.0 : (along / totalMeters);
+    final remainingSeconds = (totalDurationS * (1.0 - frac)).round();
+
+    final at = _onLineAt(along);
+    final course = at.seg + 1 < geometry.length
+        ? bearingDeg(geometry[at.seg], geometry[at.seg + 1])
+        : _lastCourse;
+    if (course != null) _lastCourse = course;
+
+    Maneuver? nextManeuver;
+    double nextManeuverMeters = 0;
+    for (final t in _turns) {
+      if (t.along > along + 8) {
+        nextManeuver = t.m;
+        nextManeuverMeters = t.along - along;
+        break;
+      }
+    }
+
+    // Note: dead reckoning never advances the arrival high-water mark or fires
+    // arrival — only a real fix may end the tour, so a long tunnel near the
+    // finish can't auto-complete it from an estimate.
+    _emit(NavState(
+      raw: null,
+      snapped: at.point,
+      speedKmh: v,
+      remainingMeters: remaining,
+      remainingSeconds: remainingSeconds,
+      traveledFraction: frac,
+      alongMeters: along,
+      offRouteMeters: 0,
+      offRoute: false,
+      arrived: _arrived,
+      nextManeuver: nextManeuver,
+      nextManeuverMeters: nextManeuverMeters,
+      courseDeg: course,
+      estimated: true,
+    ));
+  }
+
+  /// The point on the route [along] metres from the start, plus the index of
+  /// the segment it falls on (so `geometry[seg]→geometry[seg+1]` gives the
+  /// local bearing). Clamped to the route's ends.
+  ({LatLng point, int seg}) _onLineAt(double along) {
+    final a = along.clamp(0.0, totalMeters);
+    var i = 1;
+    while (i < _cum.length - 1 && _cum[i] < a) {
+      i++;
+    }
+    final segLen = _cum[i] - _cum[i - 1];
+    final t = segLen == 0 ? 0.0 : (a - _cum[i - 1]) / segLen;
+    final p0 = geometry[i - 1], p1 = geometry[i];
+    final point = LatLng(
+      p0.latitude + (p1.latitude - p0.latitude) * t,
+      p0.longitude + (p1.longitude - p0.longitude) * t,
+    );
+    return (point: point, seg: i - 1);
   }
 
   /// Bearing from the previous raw fix to [p], or null if we haven't moved far

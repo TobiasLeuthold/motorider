@@ -99,6 +99,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
   DateTime? _lastBackAt;
   LatLng? _lastBackFrom;
 
+  // ── Dead reckoning through GPS gaps (tunnels) ──
+  // Wall-clock of the last *real* fix. When fixes stop arriving (tunnel, deep
+  // cutting), [_coastTimer] keeps the puck moving along the route at the last
+  // known speed instead of letting it freeze.
+  Timer? _coastTimer;
+  DateTime _lastFixAt = DateTime.now();
+  // How long without a fix before we start dead-reckoning. At ~1 Hz, 3 s means
+  // a couple of dropped fixes are tolerated before we extrapolate.
+  static const _gpsLostAfter = Duration(seconds: 3);
+  static const _coastTick = Duration(seconds: 1);
+
   @override
   void initState() {
     super.initState();
@@ -125,6 +136,25 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _controller.move(_geometry.first, _navZoom);
     });
     _startSession();
+    // Dead-reckoning heartbeat: once real fixes have been silent for longer than
+    // [_gpsLostAfter], coast the puck forward along the route at the last known
+    // speed each tick. A returning fix resets [_lastFixAt] (via [_onFix]) and
+    // snaps everything back to truth. Skipped while simulating (the simulator
+    // feeds its own fixes, so [_lastFixAt] never goes stale anyway).
+    _coastTimer = Timer.periodic(_coastTick, (_) {
+      if (!mounted || _simulating) return;
+      if (DateTime.now().difference(_lastFixAt) >= _gpsLostAfter) {
+        _nav.coast(_coastTick);
+      }
+    });
+  }
+
+  /// Single funnel for every real fix (GPS, tracker, or simulator): stamps the
+  /// arrival time so the dead-reckoning timer knows fixes are still flowing,
+  /// then hands the fix to the current navigator.
+  void _onFix(NavFix fix) {
+    _lastFixAt = DateTime.now();
+    _nav.update(fix);
   }
 
   RouteNavigator _buildNavigator(
@@ -314,10 +344,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
   /// current [_nav] field, so it keeps driving the rebuilt navigator.
   void _useTrackerFixes() {
     final last = rideTracker.state.lastPoint;
-    if (last != null) _nav.update(_fixFromPoint(last));
+    if (last != null) _onFix(_fixFromPoint(last));
     _trackerFixSub = rideTracker.changes.listen((s) {
       final p = s.lastPoint;
-      if (p != null) _nav.update(_fixFromPoint(p));
+      if (p != null) _onFix(_fixFromPoint(p));
     });
   }
 
@@ -342,7 +372,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
     _gps = gps;
     setState(() => _gpsError = null);
-    _fixSub = gps.stream.listen(_nav.update);
+    _fixSub = gps.stream.listen(_onFix);
   }
 
   // ─────────────────────── Auto ride tracking ────────────────────────────
@@ -430,7 +460,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _simulating = true;
       _gpsError = null;
     });
-    _fixSub = sim.stream.listen(_nav.update);
+    _fixSub = sim.stream.listen(_onFix);
     sim.start();
   }
 
@@ -478,10 +508,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     if (wasSimulating) {
       final sim = RouteSimulator(route: _geometry, speedKmh: 60);
       _sim = sim;
-      _fixSub = sim.stream.listen(_nav.update);
+      _fixSub = sim.stream.listen(_onFix);
       sim.start();
     } else if (_gps != null) {
-      _fixSub = _gps!.stream.listen(_nav.update);
+      _fixSub = _gps!.stream.listen(_onFix);
     }
   }
 
@@ -514,6 +544,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _autoTracking = false;
       rideTracker.stopRide();
     }
+    _coastTimer?.cancel();
     _navSub?.cancel();
     _fixSub?.cancel();
     _trackerFixSub?.cancel();
@@ -680,6 +711,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 color: AppColors.surfaceHi,
                 icon: Icons.route_rounded,
                 text: 'Route zum Start wird berechnet …',
+              ),
+            ),
+
+          // GPS lost (tunnel): the puck is being dead-reckoned along the route
+          // at the last known speed so guidance keeps flowing. Hidden once a
+          // real fix returns. Suppressed while the other top banners are up.
+          if (s.estimated &&
+              !s.arrived &&
+              _gpsError == null &&
+              !_preparingLeadIn)
+            Positioned(
+              left: 16,
+              right: 16,
+              top: 120,
+              child: _InfoBanner(
+                color: AppColors.surfaceHi,
+                icon: Icons.gps_not_fixed_rounded,
+                text: 'GPS verloren – Position wird geschätzt',
               ),
             ),
 
