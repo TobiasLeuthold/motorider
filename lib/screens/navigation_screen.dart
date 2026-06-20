@@ -532,9 +532,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
     final s = _state;
     final eta = DateTime.now().add(Duration(seconds: s.remainingSeconds));
     final puckPos = (s.offRoute ? s.raw : s.snapped) ?? s.snapped ?? s.raw;
-    // Split the route at the rider's position along the line so what's behind
-    // them is drawn dim and what's ahead stays bright.
-    final split = splitAlong(_geometry, s.alongMeters);
+    // Split the route at the rider's position into three bands: what's behind
+    // them (dim), the next ~1 km (a stand-out highlight so they can tell which
+    // way to go where the line crosses or doubles back on itself), and the rest
+    // of the route ahead (bright accent).
+    final bands = navBands(_geometry, s.alongMeters, _nearHighlightM);
     return Scaffold(
       body: Stack(
         children: [
@@ -564,25 +566,37 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 polylines: [
                   // Already-passed portion (behind the rider along the route),
                   // drawn dim. Includes the lead-in once passed. Painted first
-                  // so the bright "ahead" line below sits on top of it at the
-                  // shared split point.
-                  if (split.passed.length >= 2)
+                  // so the bright bands below sit on top of it at the shared
+                  // split point.
+                  if (bands.passed.length >= 2)
                     Polyline(
-                      points: split.passed,
+                      points: bands.passed,
                       strokeWidth: 7,
                       color: _passedColor,
                       borderStrokeWidth: 2.5,
                       borderColor: Colors.black.withValues(alpha: 0.3),
                     ),
-                  // Upcoming portion (ahead of the rider), in the bright
-                  // navigation colour — drawn on top so it stays dominant.
-                  if (split.upcoming.length >= 2)
+                  // The route beyond the highlighted stretch, in the bright
+                  // navigation accent.
+                  if (bands.far.length >= 2)
                     Polyline(
-                      points: split.upcoming,
+                      points: bands.far,
                       strokeWidth: 7,
                       color: AppColors.accent,
                       borderStrokeWidth: 2.5,
                       borderColor: Colors.black.withValues(alpha: 0.4),
+                    ),
+                  // The immediate next ~1 km, in a stand-out highlight and a touch
+                  // thicker — drawn last so it stays dominant. This is the cue for
+                  // "go THIS way next" where the planned line passes through the
+                  // same point twice (a loop returning to an earlier junction).
+                  if (bands.near.length >= 2)
+                    Polyline(
+                      points: bands.near,
+                      strokeWidth: 8.5,
+                      color: _nearColor,
+                      borderStrokeWidth: 3,
+                      borderColor: Colors.black.withValues(alpha: 0.45),
                     ),
                   // Off-route: the quickest way back onto the planned route.
                   if (s.offRoute &&
@@ -1132,6 +1146,15 @@ const _backColor = Color(0xFF22D3EE);
 /// desaturated slate so it clearly reads as "behind" next to the bright orange
 /// accent used for the route still ahead.
 const _passedColor = Color(0xFF6B7689);
+
+/// Colour of the immediate next stretch of route — a bright, high-luminance
+/// yellow that stands clearly apart from the orange accent of the route beyond
+/// it (and the cyan "way back"). It marks which way to go next where the planned
+/// line crosses or doubles back on itself.
+const _nearColor = Color(0xFFFFE14D);
+
+/// How much of the road just ahead to paint in [_nearColor] (metres).
+const double _nearHighlightM = 1000.0;
 
 // High-contrast, fully opaque panel colours for navigation: translucent panels
 // wash out over a bright map in direct sun, so these are solid and near-black
