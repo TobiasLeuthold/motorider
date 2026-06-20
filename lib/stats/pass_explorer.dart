@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:latlong2/latlong.dart';
 
-import '../services/geo.dart' show haversineMeters;
+import '../services/geo.dart'
+    show cumulativeMeters, haversineMeters, snapToPath;
 
 /// Pässe (Swiss mountain-pass) exploration: the data model, the crossing
 /// detector, and the collection aggregator.
@@ -224,13 +225,28 @@ Future<String> loadPassAttribution() async {
 /// time-ordered fixes. [points] and [times] are parallel and must be the same
 /// length; callers feeding ride points downsample if they like, but not so
 /// coarsely that a 250 m approach to a col is stepped over.
+///
+/// [speedsMs] is an OPTIONAL parallel list of recorded GPS speeds in metres per
+/// second (one per point). When present it is the preferred source for a
+/// crossing's average speed; when empty (or full of nulls/zeros over a window)
+/// the per-crossing stats fall back to corridor distance ÷ elapsed time. It is
+/// kept optional so existing callers and unit tests can omit it.
 class RideTrack {
-  RideTrack({required this.rideId, required this.points, required this.times})
-      : assert(points.length == times.length);
+  RideTrack({
+    required this.rideId,
+    required this.points,
+    required this.times,
+    this.speedsMs = const [],
+  })  : assert(points.length == times.length),
+        assert(speedsMs.isEmpty || speedsMs.length == points.length);
 
   final String rideId;
   final List<LatLng> points;
   final List<DateTime> times;
+
+  /// Recorded GPS speeds (m/s), parallel to [points], or empty if unavailable.
+  /// Individual entries may be null where a fix had no speed.
+  final List<double?> speedsMs;
 
   bool get isEmpty => points.isEmpty;
 }
@@ -273,10 +289,19 @@ bool trackMayReach(RideTrack track, LatLng col,
 }
 
 /// One detected crossing of a pass.
+///
+/// [triggerIndex] is the index, in the originating [RideTrack], of the fix that
+/// fired this crossing (the first one inside the trigger radius). It anchors the
+/// per-crossing corridor analysis ([crossingStats]).
 class Crossing {
-  const Crossing({required this.rideId, required this.at});
+  const Crossing({
+    required this.rideId,
+    required this.at,
+    required this.triggerIndex,
+  });
   final String rideId;
   final DateTime at;
+  final int triggerIndex;
 }
 
 /// Walk a single ride's points and count crossings of [col] with hysteresis.
@@ -299,7 +324,11 @@ List<Crossing> detectCrossingsInTrack(
     final d = haversineMeters(track.points[i], col);
     if (armed) {
       if (d <= triggerRadiusM) {
-        out.add(Crossing(rideId: track.rideId, at: track.times[i]));
+        out.add(Crossing(
+          rideId: track.rideId,
+          at: track.times[i],
+          triggerIndex: i,
+        ));
         armed = false;
       }
     } else {
@@ -307,6 +336,266 @@ List<Crossing> detectCrossingsInTrack(
     }
   }
   return out;
+}
+
+// ───────────────────────── per-crossing corridor stats ─────────────────────
+//
+// Once the hysteresis detector has decided THAT a crossing happened (and
+// anchored it at a trigger fix), these pure helpers measure HOW it was ridden:
+// the rider's average speed, the time spent, and the direction of travel over
+// the pass. The math is deliberately split out from the detector so it can be
+// unit-tested in isolation and never perturbs the crossing count.
+
+/// Half-width of the pass "corridor": a fix counts as on the pass when it is
+/// within this perpendicular distance of the segment [Pass.geometry] polyline.
+/// Wide enough to absorb GPS noise and a road that is a few metres off the
+/// downsampled polyline, tight enough to exclude a parallel valley road.
+const double kCorridorHalfWidthM = 120.0;
+
+/// Speeds above this (≈ 216 km/h) are treated as GPS outliers and dropped from
+/// the recorded-speed average — a motorcycle on a pass never sustains them, so
+/// such a value is a bad fix, not a real reading.
+const double kMaxPlausibleSpeedMs = 60.0;
+
+/// A point-to-point implied speed above this (≈ 252 km/h) marks a GPS gap /
+/// teleport; the leg is ignored when summing corridor distance/time for the
+/// distance ÷ time fallback so one bad fix can't invent kilometres.
+const double kMaxPlausibleLegSpeedMs = 70.0;
+
+/// Which way the rider travelled over a pass segment, relative to the dataset's
+/// [Pass.start] → [Pass.end] orientation.
+enum PassDirection {
+  /// From the [Pass.start] foot, over the col, towards the [Pass.end] foot.
+  startToEnd,
+
+  /// From the [Pass.end] foot back towards the [Pass.start] foot.
+  endToStart,
+
+  /// Direction could not be determined (no usable geometry / too few points).
+  unknown,
+}
+
+/// The measured profile of one crossing: how fast, how long, which way.
+class PassCrossing {
+  const PassCrossing({
+    required this.rideId,
+    required this.at,
+    required this.direction,
+    this.avgSpeedKmh,
+    this.durationS,
+    this.directionLabel,
+  });
+
+  final String rideId;
+
+  /// When the crossing fired (the trigger fix's timestamp).
+  final DateTime at;
+
+  final PassDirection direction;
+
+  /// Average speed over the corridor portion, in km/h. Null when it could not
+  /// be measured (e.g. a single corridor fix, or no time elapsed).
+  final double? avgSpeedKmh;
+
+  /// Seconds spent within the corridor for this crossing. Null when unknown.
+  final int? durationS;
+
+  /// Human-readable German direction label, e.g. `'Realp → Gletsch'`, or a
+  /// `'↑'` / `'↓'` arrow when the connected place names are unavailable. Null
+  /// when the direction is [PassDirection.unknown].
+  final String? directionLabel;
+}
+
+/// Build the German direction label for [dir] over [pass], preferring the
+/// connected place names ("Realp → Gletsch") and falling back to arrows.
+String? passDirectionLabel(Pass pass, PassDirection dir) {
+  if (dir == PassDirection.unknown) return null;
+  final names = pass.connects;
+  // connects is given in start→end order (same orientation as the segment).
+  if (names != null && names.length >= 2) {
+    final a = names.first.trim();
+    final b = names.last.trim();
+    if (a.isNotEmpty && b.isNotEmpty) {
+      return dir == PassDirection.startToEnd ? '$a → $b' : '$b → $a';
+    }
+  }
+  return dir == PassDirection.startToEnd ? '↑' : '↓';
+}
+
+/// The contiguous run of fixes around a crossing that lie inside the pass
+/// corridor — the slice the speed/time/direction are measured over.
+class CorridorWindow {
+  const CorridorWindow({
+    required this.startIndex,
+    required this.endIndex,
+    required this.entryNearStartFoot,
+  });
+
+  /// Inclusive index of the first corridor fix in the ride track.
+  final int startIndex;
+
+  /// Inclusive index of the last corridor fix in the ride track.
+  final int endIndex;
+
+  /// True when the rider ENTERED the corridor nearer the [Pass.start] foot than
+  /// the [Pass.end] foot — i.e. travelling start→end. Null when undecidable.
+  final bool? entryNearStartFoot;
+
+  int get length => endIndex - startIndex + 1;
+}
+
+/// True when [p] is within [halfWidthM] of the segment polyline [geometry]
+/// (or, with no usable polyline, within [halfWidthM] of either foot). Pure.
+bool isInCorridor(
+  LatLng p,
+  List<LatLng> geometry, {
+  PassPoint? startFoot,
+  PassPoint? endFoot,
+  double halfWidthM = kCorridorHalfWidthM,
+  List<double>? cumulative,
+}) {
+  if (geometry.length >= 2) {
+    final snap = snapToPath(p, geometry, cumulative: cumulative);
+    if (snap != null) return snap.crossTrackMeters <= halfWidthM;
+  }
+  // Degenerate geometry: fall back to nearness to either foot.
+  for (final f in [startFoot, endFoot]) {
+    if (f != null && haversineMeters(p, f.latLng) <= halfWidthM) return true;
+  }
+  return false;
+}
+
+/// Find the maximal run of consecutive corridor fixes that contains the
+/// [triggerIndex] fix. The crossing's stats are computed over exactly this run,
+/// so two distinct crossings (each with its own trigger) get measured
+/// independently even within one ride. Returns null when the trigger fix itself
+/// isn't in the corridor (e.g. a ride that only clips the corridor edge near
+/// the col without ever entering it — not a full crossing to measure).
+CorridorWindow? corridorWindow(
+  RideTrack track,
+  Pass pass, {
+  required int triggerIndex,
+  double halfWidthM = kCorridorHalfWidthM,
+}) {
+  final pts = track.points;
+  if (triggerIndex < 0 || triggerIndex >= pts.length) return null;
+  final geom = pass.geometry;
+  final cum = geom.length >= 2 ? cumulativeMeters(geom) : null;
+
+  bool inCorr(int i) => isInCorridor(
+        pts[i],
+        geom,
+        startFoot: pass.start,
+        endFoot: pass.end,
+        halfWidthM: halfWidthM,
+        cumulative: cum,
+      );
+
+  if (!inCorr(triggerIndex)) return null;
+
+  var lo = triggerIndex;
+  while (lo - 1 >= 0 && inCorr(lo - 1)) {
+    lo--;
+  }
+  var hi = triggerIndex;
+  while (hi + 1 < pts.length && inCorr(hi + 1)) {
+    hi++;
+  }
+
+  // Direction: compare the entry fix's distance to each foot.
+  bool? entryNearStart;
+  final s = pass.start, e = pass.end;
+  if (s != null && e != null) {
+    final entry = pts[lo];
+    final dStart = haversineMeters(entry, s.latLng);
+    final dEnd = haversineMeters(entry, e.latLng);
+    if ((dStart - dEnd).abs() > 1e-6) entryNearStart = dStart < dEnd;
+  }
+
+  return CorridorWindow(
+    startIndex: lo,
+    endIndex: hi,
+    entryNearStartFoot: entryNearStart,
+  );
+}
+
+/// Average a window's recorded GPS speeds (m/s → km/h), ignoring null/zero and
+/// implausibly fast outliers. Returns null when no usable reading remains.
+double? _avgRecordedSpeedKmh(RideTrack track, int lo, int hi) {
+  final speeds = track.speedsMs;
+  if (speeds.isEmpty) return null;
+  var sum = 0.0;
+  var n = 0;
+  for (var i = lo; i <= hi && i < speeds.length; i++) {
+    final v = speeds[i];
+    if (v == null || v <= 0) continue;
+    if (v > kMaxPlausibleSpeedMs) continue; // outlier fix
+    sum += v;
+    n++;
+  }
+  if (n == 0) return null;
+  return (sum / n) * 3.6;
+}
+
+/// Corridor distance (m) over the window, skipping legs whose implied speed is
+/// an obvious GPS teleport, and the total elapsed time (s) end-to-end.
+({double distanceM, int elapsedS}) _corridorDistanceTime(
+    RideTrack track, int lo, int hi) {
+  var dist = 0.0;
+  for (var i = lo + 1; i <= hi; i++) {
+    final segM = haversineMeters(track.points[i - 1], track.points[i]);
+    final dt = track.times[i].difference(track.times[i - 1]).inMilliseconds;
+    if (dt > 0) {
+      final legSpeed = segM / (dt / 1000.0);
+      if (legSpeed > kMaxPlausibleLegSpeedMs) continue; // GPS gap / teleport
+    }
+    dist += segM;
+  }
+  final elapsed = track.times[hi].difference(track.times[lo]).inSeconds;
+  return (distanceM: dist, elapsedS: elapsed);
+}
+
+/// Measure a single crossing's direction, average speed and duration over its
+/// corridor window. Pure and fully unit-testable. Returns null when [crossing]
+/// doesn't correspond to a real corridor traversal (trigger fix not in the
+/// corridor — e.g. a ride that only clips the corridor edge).
+PassCrossing? crossingStats(
+  RideTrack track,
+  Pass pass,
+  Crossing crossing, {
+  double halfWidthM = kCorridorHalfWidthM,
+}) {
+  final win = corridorWindow(
+    track,
+    pass,
+    triggerIndex: crossing.triggerIndex,
+    halfWidthM: halfWidthM,
+  );
+  if (win == null) return null;
+
+  final lo = win.startIndex, hi = win.endIndex;
+  final dt = _corridorDistanceTime(track, lo, hi);
+  final elapsedS = dt.elapsedS;
+
+  // Prefer recorded speeds; fall back to corridor distance ÷ elapsed time.
+  double? avgKmh = _avgRecordedSpeedKmh(track, lo, hi);
+  if (avgKmh == null && elapsedS > 0 && dt.distanceM > 0) {
+    avgKmh = (dt.distanceM / elapsedS) * 3.6;
+  }
+
+  final near = win.entryNearStartFoot;
+  final direction = near == null
+      ? PassDirection.unknown
+      : (near ? PassDirection.startToEnd : PassDirection.endToStart);
+
+  return PassCrossing(
+    rideId: crossing.rideId,
+    at: crossing.at,
+    direction: direction,
+    avgSpeedKmh: avgKmh,
+    durationS: elapsedS > 0 ? elapsedS : null,
+    directionLabel: passDirectionLabel(pass, direction),
+  );
 }
 
 /// The per-pass roll-up of how often, and when, it has been ridden.
@@ -317,6 +606,7 @@ class PassProgress {
     required this.firstDate,
     required this.lastDate,
     required this.rideIds,
+    this.crossings = const [],
   });
 
   final Pass pass;
@@ -329,7 +619,64 @@ class PassProgress {
   /// Distinct ride ids that crossed this pass, in first-seen order.
   final List<String> rideIds;
 
+  /// The measured profile of every crossing (direction, avg speed, duration),
+  /// in chronological order. May be shorter than [count] for crossings whose
+  /// corridor couldn't be measured; empty when not computed. Additive — older
+  /// callers ignore it.
+  final List<PassCrossing> crossings;
+
   bool get crossed => count > 0;
+
+  /// Fastest single-crossing average speed over this pass (km/h), or null when
+  /// no crossing had a measurable speed.
+  double? get bestSpeedKmh {
+    double? best;
+    for (final c in crossings) {
+      final v = c.avgSpeedKmh;
+      if (v == null) continue;
+      if (best == null || v > best) best = v;
+    }
+    return best;
+  }
+
+  /// Mean of the per-crossing average speeds (km/h), or null when none are
+  /// measurable.
+  double? get meanSpeedKmh {
+    var sum = 0.0;
+    var n = 0;
+    for (final c in crossings) {
+      final v = c.avgSpeedKmh;
+      if (v == null) continue;
+      sum += v;
+      n++;
+    }
+    return n == 0 ? null : sum / n;
+  }
+
+  /// Total time spent on this pass across all measured crossings, in seconds.
+  int get totalTimeOnPassS {
+    var s = 0;
+    for (final c in crossings) {
+      s += c.durationS ?? 0;
+    }
+    return s;
+  }
+}
+
+/// The single fastest pass crossing across the whole collection: which pass and
+/// how fast (km/h average over the corridor), plus when and which ride.
+class FastestCrossing {
+  const FastestCrossing({
+    required this.pass,
+    required this.avgSpeedKmh,
+    required this.at,
+    required this.rideId,
+  });
+
+  final Pass pass;
+  final double avgSpeedKmh;
+  final DateTime at;
+  final String rideId;
 }
 
 /// Collection-wide totals derived from the per-pass progress.
@@ -343,6 +690,8 @@ class CollectionStats {
     required this.highestUncrossed,
     required this.mostCrossed,
     required this.perCanton,
+    this.fastestCrossing,
+    this.totalTimeOnPassesS = 0,
   });
 
   /// Total passes in the dataset.
@@ -368,6 +717,14 @@ class CollectionStats {
   /// Per-canton progress, keyed by canton code → (done, total). A pass that
   /// touches two cantons counts towards both.
   final Map<String, CantonProgress> perCanton;
+
+  /// Your fastest single pass crossing anywhere in the collection (pass +
+  /// average speed), or null when no crossing had a measurable speed.
+  final FastestCrossing? fastestCrossing;
+
+  /// Total time spent on passes — the sum of every measured crossing's
+  /// duration, in seconds. 0 when nothing has been measured.
+  final int totalTimeOnPassesS;
 
   double get percent => total == 0 ? 0 : explored * 100.0 / total;
 }
@@ -409,6 +766,7 @@ PassExplorationResult explorePasses(
     DateTime? last;
     final rideIds = <String>[];
     final seenRides = <String>{};
+    final measured = <PassCrossing>[];
 
     for (final ride in rides) {
       if (ride.isEmpty) continue;
@@ -426,15 +784,20 @@ PassExplorationResult explorePasses(
       for (final c in crossings) {
         if (first == null || c.at.isBefore(first)) first = c.at;
         if (last == null || c.at.isAfter(last)) last = c.at;
+        // Measure how this crossing was ridden (speed/time/direction).
+        final stats = crossingStats(ride, pass, c);
+        if (stats != null) measured.add(stats);
       }
     }
 
+    measured.sort((a, b) => a.at.compareTo(b.at));
     progress.add(PassProgress(
       pass: pass,
       count: count,
       firstDate: first,
       lastDate: last,
       rideIds: rideIds,
+      crossings: measured,
     ));
   }
 
@@ -449,8 +812,10 @@ CollectionStats _aggregate(List<Pass> passes, List<PassProgress> progress) {
 
   var metres = 0;
   var hairpins = 0;
+  var totalTimeOnPassesS = 0;
   PassProgress? highestCrossed;
   PassProgress? mostCrossed;
+  FastestCrossing? fastest;
   for (final p in crossed) {
     final ele = p.pass.ele;
     if (ele != null) metres += ele;
@@ -463,6 +828,19 @@ CollectionStats _aggregate(List<Pass> passes, List<PassProgress> progress) {
     }
     if (mostCrossed == null || p.count > mostCrossed.count) {
       mostCrossed = p;
+    }
+    // Per-crossing roll-ups: total time on passes + the single fastest crossing.
+    for (final c in p.crossings) {
+      totalTimeOnPassesS += c.durationS ?? 0;
+      final v = c.avgSpeedKmh;
+      if (v != null && (fastest == null || v > fastest.avgSpeedKmh)) {
+        fastest = FastestCrossing(
+          pass: p.pass,
+          avgSpeedKmh: v,
+          at: c.at,
+          rideId: c.rideId,
+        );
+      }
     }
   }
 
@@ -498,5 +876,7 @@ CollectionStats _aggregate(List<Pass> passes, List<PassProgress> progress) {
     highestUncrossed: highestUncrossed,
     mostCrossed: mostCrossed,
     perCanton: perCanton,
+    fastestCrossing: fastest,
+    totalTimeOnPassesS: totalTimeOnPassesS,
   );
 }
