@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../main.dart';
 import '../models/ride.dart';
+import '../services/geo.dart' show cumulativeMeters;
+import '../stats/pass_elevation_profile.dart';
 import '../stats/pass_explorer.dart';
 import '../stats/pass_summary.dart';
 import '../theme.dart';
@@ -19,15 +22,51 @@ import 'ride_detail_screen.dart';
 /// Opened from the Pässe list, the "Meine Pässe" overview and the map's pass
 /// tap-sheet. Renders entirely from a [PassProgress] (already computed by the
 /// exploration loader), so it needs no async work of its own.
-class PassDetailScreen extends StatelessWidget {
+class PassDetailScreen extends StatefulWidget {
   const PassDetailScreen({super.key, required this.progress});
 
   final PassProgress progress;
 
-  Pass get pass => progress.pass;
+  @override
+  State<PassDetailScreen> createState() => _PassDetailScreenState();
+}
+
+class _PassDetailScreenState extends State<PassDetailScreen> {
+  Pass get pass => widget.progress.pass;
+
+  /// Per-vertex elevations keyed by pass id, loaded once from the bundled asset.
+  Map<String, List<double>>? _eleMap;
+
+  /// Distance (km) along the pass the rider is scrubbing on the profile, mirrored
+  /// as a moving marker on the segment map. Null when not scrubbing.
+  double? _cursorKm;
+
+  @override
+  void initState() {
+    super.initState();
+    loadPassElevations().then((m) {
+      if (mounted) setState(() => _eleMap = m);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final geom = pass.geometry;
+    final hasGeom = geom.length >= 2;
+    final cum = hasGeom ? cumulativeMeters(geom) : const <double>[];
+
+    // Prefer the detailed per-vertex profile; fall back to the 3-anchor sketch
+    // until/unless the elevation asset has a matching entry for this pass.
+    final eles = _eleMap?[passElevationId(pass)];
+    final detailed = (eles != null && hasGeom)
+        ? detailedPassProfile(geom, eles)
+        : const <PassElevationPoint>[];
+    final points = detailed.length >= 2 ? detailed : passElevationProfile(pass);
+
+    final cursor = (_cursorKm != null && hasGeom)
+        ? pointAlongGeometry(geom, cum, _cursorKm! * 1000)
+        : null;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(pass.name),
@@ -35,17 +74,22 @@ class PassDetailScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: [
-          _Header(progress: progress),
+          _Header(progress: widget.progress),
           const SizedBox(height: 4),
-          if (pass.geometry.length >= 2) ...[
-            _SegmentMap(pass: pass),
+          if (hasGeom) ...[
+            _SegmentMap(pass: pass, cursor: cursor),
             _Endpoints(pass: pass),
             const SizedBox(height: 4),
           ],
-          PassElevationChart(pass: pass),
+          PassElevationChart(
+            pass: pass,
+            points: points,
+            cursorKm: _cursorKm,
+            onScrub: hasGeom ? (km) => setState(() => _cursorKm = km) : null,
+          ),
           _FactsGrid(pass: pass),
           const SizedBox(height: 8),
-          _HistorySection(progress: progress),
+          _HistorySection(progress: widget.progress),
         ],
       ),
     );
@@ -177,8 +221,12 @@ class _Chip extends StatelessWidget {
 /// polyline with the col and both feet marked, fitted to the segment bounds so
 /// the road's shape (the serpentines!) is visible at a glance.
 class _SegmentMap extends StatefulWidget {
-  const _SegmentMap({required this.pass});
+  const _SegmentMap({required this.pass, this.cursor});
   final Pass pass;
+
+  /// Live position scrubbed on the height profile, drawn as a moving marker so
+  /// the rider sees exactly where on the road that elevation sits. Null = none.
+  final LatLng? cursor;
 
   @override
   State<_SegmentMap> createState() => _SegmentMapState();
@@ -225,6 +273,15 @@ class _SegmentMapState extends State<_SegmentMap> {
           width: 20,
           height: 20,
           child: const _FootMarker(isStart: false),
+        ),
+      // Scrub cursor: where the height-profile finger currently is. Drawn last
+      // so it sits on top of the col/foot markers.
+      if (widget.cursor != null)
+        Marker(
+          point: widget.cursor!,
+          width: 24,
+          height: 24,
+          child: const _CursorMarker(),
         ),
     ];
 
@@ -284,6 +341,29 @@ class _SegmentMapState extends State<_SegmentMap> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Marker tracking the rider's finger on the height profile — a bright ringed
+/// dot so it reads clearly as "this point on the road = this point on the curve".
+class _CursorMarker extends StatelessWidget {
+  const _CursorMarker();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: AppColors.accent, width: 4),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
     );
   }

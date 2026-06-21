@@ -7,38 +7,61 @@ import '../stats/pass_explorer.dart' show Pass;
 import '../theme.dart';
 
 /// Height profile of a single pass: the climb from one foot up over the col and
-/// down to the other foot, drawn to scale so the col sits at its real distance
-/// along the road and each foot at its real elevation (the two sides are
-/// usually neither the same height nor the same length).
+/// down to the other, drawn to scale (real distance along x, height over sea
+/// level on y). Detailed when per-vertex elevations are available, falling back
+/// to a 3-anchor sketch otherwise.
 ///
-/// Falls back to nothing when the pass lacks the elevations/geometry needed to
-/// draw an honest profile — see [passElevationProfile].
+/// Interactive: dragging across the chart reports the distance along the pass
+/// via [onScrub]; the owner turns that into a moving marker on the segment map.
+/// [cursorKm] (fed back by the owner) draws the matching readout + indicator
+/// here so the chart and the map stay in lock-step.
 class PassElevationChart extends StatelessWidget {
-  const PassElevationChart({super.key, required this.pass});
+  const PassElevationChart({
+    super.key,
+    required this.pass,
+    required this.points,
+    this.cursorKm,
+    this.onScrub,
+  });
 
   final Pass pass;
+  final List<PassElevationPoint> points;
+
+  /// Distance along the pass currently highlighted (km), or null for none.
+  final double? cursorKm;
+
+  /// Called with the distance (km) the rider drags to, for live map tracking.
+  final ValueChanged<double?>? onScrub;
 
   @override
   Widget build(BuildContext context) {
-    final points = passElevationProfile(pass);
     if (points.length < 2) return const SizedBox.shrink();
 
-    final summit = (pass.summitEle ?? pass.ele)?.toDouble();
     final totalKm = points.last.km;
-    final colKm = _colKm(points, summit);
-    final colFrac = totalKm <= 0 ? 0.5 : (colKm / totalKm);
-
     var minEle = points.first.ele;
     var maxEle = points.first.ele;
+    var summitKm = points.first.km;
     for (final p in points) {
       if (p.ele < minEle) minEle = p.ele;
-      if (p.ele > maxEle) maxEle = p.ele;
+      if (p.ele > maxEle) {
+        maxEle = p.ele;
+        summitKm = p.km;
+      }
     }
+    final summitFrac = totalKm <= 0 ? 0.5 : (summitKm / totalKm);
+
+    final cursorEle = cursorKm == null ? null : eleAtKm(points, cursorKm!);
 
     final connects =
         (pass.connects != null && pass.connects!.length == 2) ? pass.connects! : null;
     final leftName = connects?[0] ?? 'Start';
     final rightName = connects?[1] ?? 'Ziel';
+
+    void reportAt(double dx, double width) {
+      if (onScrub == null || width <= 0) return;
+      final frac = (dx / width).clamp(0.0, 1.0);
+      onScrub!(frac * totalKm);
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -52,56 +75,75 @@ class PassElevationChart extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Höhenprofil',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textMuted.withValues(alpha: 0.9),
-                letterSpacing: 0.2,
-              ),
+            Row(
+              children: [
+                Text(
+                  'Höhenprofil',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textMuted.withValues(alpha: 0.9),
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const Spacer(),
+                if (cursorKm != null && cursorEle != null)
+                  Text(
+                    '${_fmtKm(cursorKm!)} km · ${cursorEle.round()} m',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.accent,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 96,
+              height: 100,
               child: LayoutBuilder(
                 builder: (context, c) {
-                  // Place the summit tag over the col's real x-position, kept
-                  // fully on-card at the extremes.
                   final tagLeft =
-                      (colFrac * c.maxWidth - 26).clamp(0.0, c.maxWidth - 52);
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: _PassProfilePainter(
-                            points: points,
-                            minEle: minEle,
-                            maxEle: maxEle,
-                            summit: summit,
+                      (summitFrac * c.maxWidth - 26).clamp(0.0, c.maxWidth - 52);
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (d) => reportAt(d.localPosition.dx, c.maxWidth),
+                    onHorizontalDragStart: (d) =>
+                        reportAt(d.localPosition.dx, c.maxWidth),
+                    onHorizontalDragUpdate: (d) =>
+                        reportAt(d.localPosition.dx, c.maxWidth),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: _PassProfilePainter(
+                              points: points,
+                              minEle: minEle,
+                              maxEle: maxEle,
+                              summitKm: summitKm,
+                              cursorKm: cursorKm,
+                              cursorEle: cursorEle,
+                            ),
                           ),
                         ),
-                      ),
-                      // Max / min elevation ticks on the left edge.
-                      Positioned(
-                        left: 0,
-                        top: 0,
-                        child: _AxisLabel('${maxEle.round()} m'),
-                      ),
-                      Positioned(
-                        left: 0,
-                        bottom: 0,
-                        child: _AxisLabel('${minEle.round()} m'),
-                      ),
-                      // Summit elevation tag at the col.
-                      if (summit != null)
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          child: _AxisLabel('${maxEle.round()} m'),
+                        ),
+                        Positioned(
+                          left: 0,
+                          bottom: 0,
+                          child: _AxisLabel('${minEle.round()} m'),
+                        ),
                         Positioned(
                           left: tagLeft,
                           top: -2,
-                          child: _SummitTag(ele: summit.round()),
+                          child: _SummitTag(ele: maxEle.round()),
                         ),
-                    ],
+                      ],
+                    ),
                   );
                 },
               ),
@@ -115,15 +157,27 @@ class PassElevationChart extends StatelessWidget {
                   align: CrossAxisAlignment.start,
                 ),
                 Expanded(
-                  child: Text(
-                    '${_fmtKm(totalKm)} km'
-                    '${pass.heightGainM != null ? ' · ↑${pass.heightGainM} m' : ''}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textMuted,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${_fmtKm(totalKm)} km'
+                        '${pass.heightGainM != null ? ' · ↑${pass.heightGainM} m' : ''}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (onScrub != null)
+                        Text(
+                          'Profil ziehen ↔',
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: AppColors.textMuted.withValues(alpha: 0.7),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 _ProfileFootLabel(
@@ -137,15 +191,6 @@ class PassElevationChart extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  /// The km of the highest anchor (the col), used to position the summit tag.
-  double _colKm(List<PassElevationPoint> points, double? summit) {
-    var best = points.first;
-    for (final p in points) {
-      if (p.ele > best.ele) best = p;
-    }
-    return best.km;
   }
 }
 
@@ -180,23 +225,18 @@ class _SummitTag extends StatelessWidget {
   final int ele;
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.terrain_rounded, size: 11, color: AppColors.accent),
-            const SizedBox(width: 2),
-            Text(
-              '$ele m',
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                color: AppColors.accent,
-              ),
-            ),
-          ],
+        const Icon(Icons.terrain_rounded, size: 11, color: AppColors.accent),
+        const SizedBox(width: 2),
+        Text(
+          '$ele m',
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: AppColors.accent,
+          ),
         ),
       ],
     );
@@ -244,21 +284,25 @@ class _ProfileFootLabel extends StatelessWidget {
   }
 }
 
-/// Paints the to-scale climb silhouette: a filled area under the profile line
-/// with a dot at each surveyed anchor (the col dot accented). x is distance
-/// along the road, y is elevation over the [minEle]…[maxEle] span.
+/// Paints the to-scale climb silhouette: filled area under the profile line, a
+/// dot at the summit, and — while scrubbing — a vertical indicator + dot at the
+/// cursor. x is distance along the road, y is elevation over [minEle]…[maxEle].
 class _PassProfilePainter extends CustomPainter {
   _PassProfilePainter({
     required this.points,
     required this.minEle,
     required this.maxEle,
-    required this.summit,
+    required this.summitKm,
+    required this.cursorKm,
+    required this.cursorEle,
   });
 
   final List<PassElevationPoint> points;
   final double minEle;
   final double maxEle;
-  final double? summit;
+  final double summitKm;
+  final double? cursorKm;
+  final double? cursorEle;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -283,13 +327,15 @@ class _PassProfilePainter extends CustomPainter {
     fillPath
       ..lineTo(offsets.last.dx, size.height)
       ..close();
-    final fill = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0x66FF6B1A), Color(0x11FF6B1A)],
-      ).createShader(Offset.zero & size);
-    canvas.drawPath(fillPath, fill);
+    canvas.drawPath(
+      fillPath,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x66FF6B1A), Color(0x11FF6B1A)],
+        ).createShader(Offset.zero & size),
+    );
 
     // Profile line.
     final linePath = ui.Path()..moveTo(offsets.first.dx, offsets.first.dy);
@@ -305,20 +351,31 @@ class _PassProfilePainter extends CustomPainter {
         ..strokeJoin = StrokeJoin.round,
     );
 
-    // Anchor dots — accent the summit, subdue the feet.
-    for (var i = 0; i < points.length; i++) {
-      final isSummit = summit != null && (points[i].ele - summit!).abs() < 0.5;
-      final o = offsets[i];
-      canvas.drawCircle(o, isSummit ? 4 : 3,
-          Paint()..color = isSummit ? AppColors.accent : AppColors.textMuted);
-      canvas.drawCircle(
-        o,
-        isSummit ? 4 : 3,
+    // Summit dot.
+    final summit = Offset(x(summitKm), y(maxEle));
+    canvas.drawCircle(summit, 4, Paint()..color = AppColors.accent);
+    canvas.drawCircle(
+      summit,
+      4,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+
+    // Scrub cursor.
+    if (cursorKm != null && cursorEle != null) {
+      final cx = x(cursorKm!);
+      canvas.drawLine(
+        Offset(cx, topPad - 6),
+        Offset(cx, size.height),
         Paint()
-          ..color = Colors.white
-          ..style = PaintingStyle.stroke
+          ..color = Colors.white.withValues(alpha: 0.85)
           ..strokeWidth = 1.5,
       );
+      final cp = Offset(cx, y(cursorEle!));
+      canvas.drawCircle(cp, 5, Paint()..color = Colors.white);
+      canvas.drawCircle(cp, 4, Paint()..color = AppColors.accent);
     }
   }
 
@@ -327,5 +384,5 @@ class _PassProfilePainter extends CustomPainter {
       old.points != points ||
       old.minEle != minEle ||
       old.maxEle != maxEle ||
-      old.summit != summit;
+      old.cursorKm != cursorKm;
 }

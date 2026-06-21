@@ -140,4 +140,76 @@ void main() {
       expect(passElevationProfile(noFeet), isEmpty);
     });
   });
+
+  group('detailedPassProfile', () {
+    test('pairs each geometry vertex with its elevation by distance', () {
+      final geom = _line(5, 4000); // 5 pts over 4 km → 1 km spacing
+      final eles = [1000.0, 1200.0, 1500.0, 1300.0, 900.0];
+      final prof = detailedPassProfile(geom, eles);
+      expect(prof.length, 5);
+      expect(prof.first.km, closeTo(0, 0.01));
+      expect(prof.last.km, closeTo(4.0, 0.05));
+      expect(prof[2].km, closeTo(2.0, 0.05));
+      expect(prof[2].ele, 1500);
+      // Distances increase monotonically.
+      for (var i = 1; i < prof.length; i++) {
+        expect(prof[i].km, greaterThanOrEqualTo(prof[i - 1].km));
+      }
+    });
+
+    test('returns nothing when lengths mismatch', () {
+      final geom = _line(5, 4000);
+      expect(detailedPassProfile(geom, [1.0, 2.0]), isEmpty);
+      expect(detailedPassProfile(geom, const []), isEmpty);
+    });
+  });
+
+  group('eleAtKm', () {
+    final pts = [
+      const PassElevationPoint(km: 0, ele: 1000),
+      const PassElevationPoint(km: 2, ele: 2000),
+      const PassElevationPoint(km: 4, ele: 1000),
+    ];
+    test('interpolates within a segment', () {
+      expect(eleAtKm(pts, 1), closeTo(1500, 0.001)); // halfway up
+      expect(eleAtKm(pts, 3), closeTo(1500, 0.001)); // halfway down
+      expect(eleAtKm(pts, 2), 2000);
+    });
+    test('clamps past the ends', () {
+      expect(eleAtKm(pts, -1), 1000);
+      expect(eleAtKm(pts, 99), 1000);
+    });
+  });
+
+  group('pointAlongGeometry', () {
+    test('walks the polyline by distance and clamps to the ends', () {
+      final geom = _line(5, 4000);
+      final cum = [
+        0.0,
+        for (var i = 1; i < geom.length; i++) i * 1000.0,
+      ];
+      final mid = pointAlongGeometry(geom, cum, 2000);
+      expect(mid.latitude, closeTo(geom[2].latitude, 1e-6));
+      expect(mid.longitude, closeTo(geom[2].longitude, 1e-4));
+      // Clamps.
+      expect(pointAlongGeometry(geom, cum, -5).longitude,
+          closeTo(geom.first.longitude, 1e-9));
+      expect(pointAlongGeometry(geom, cum, 999999).longitude,
+          closeTo(geom.last.longitude, 1e-9));
+    });
+  });
+
+  group('parsePassElevations', () {
+    test('reads the elevations map keyed by id', () {
+      const json = '{"_attribution":"x",'
+          '"elevations":{"123":[1000,1100,1200],"Foo":[800.5,810]}}';
+      final m = parsePassElevations(json);
+      expect(m['123'], [1000.0, 1100.0, 1200.0]);
+      expect(m['Foo'], [800.5, 810.0]);
+    });
+    test('tolerates junk', () {
+      expect(parsePassElevations('[]'), isEmpty);
+      expect(parsePassElevations('{"nope":1}'), isEmpty);
+    });
+  });
 }
