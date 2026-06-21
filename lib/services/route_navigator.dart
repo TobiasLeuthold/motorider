@@ -375,6 +375,18 @@ class RouteNavigator {
       _coastAlong = (_coastAlong + stepM).clamp(0.0, totalMeters);
     }
 
+    // Keep the windowed-snap anchor following the dead-reckoned position. The
+    // returning real fix after the gap is map-matched within a window around
+    // [_along] (see [update]); if [_along] stayed frozen at the gap's *start*, a
+    // gap longer than the forward window would land the rider's true position
+    // outside it, forcing the occurrence-blind global re-acquire — which on a
+    // self-crossing route teleports progress onto the wrong pass (the very loop
+    // bug the windowed snap exists to prevent). Advancing [_along] with the coast
+    // keeps that window centred on where the rider actually is, so the fix lands
+    // inside it and the occurrence-aware snap resolves it. (We deliberately do
+    // NOT touch [_maxAlong] — arrival must still come only from a real fix.)
+    _along = _coastAlong;
+
     final along = _coastAlong;
     final remaining = (totalMeters - along).clamp(0.0, totalMeters);
     final frac = totalMeters == 0 ? 1.0 : (along / totalMeters);
