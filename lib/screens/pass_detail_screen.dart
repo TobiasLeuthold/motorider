@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +7,7 @@ import '../models/ride.dart';
 import '../stats/pass_explorer.dart';
 import '../stats/pass_summary.dart';
 import '../theme.dart';
+import '../widgets/pass_elevation_chart.dart';
 import 'ride_detail_screen.dart';
 
 /// Rich detail view for a single Swiss pass: its facts (elevation, climb,
@@ -42,7 +41,7 @@ class PassDetailScreen extends StatelessWidget {
             _SegmentMap(pass: pass),
             const SizedBox(height: 4),
           ],
-          _ProfileStrip(pass: pass),
+          PassElevationChart(pass: pass),
           _FactsGrid(pass: pass),
           const SizedBox(height: 8),
           _HistorySection(progress: progress),
@@ -323,200 +322,6 @@ class _FootDot extends StatelessWidget {
       ),
     );
   }
-}
-
-// ─────────────────────────── Profile strip ───────────────────────────
-
-/// A tiny ASCII-of-a-mountain elevation profile: start foot → summit → end
-/// foot, with each elevation labelled. Drawn from the two feet + the summit, so
-/// it shows the climb shape without pretending to be a metre-accurate profile.
-class _ProfileStrip extends StatelessWidget {
-  const _ProfileStrip({required this.pass});
-  final Pass pass;
-
-  @override
-  Widget build(BuildContext context) {
-    final startEle = pass.start?.ele;
-    final endEle = pass.end?.ele;
-    final summit = pass.summitEle ?? pass.ele;
-    // Need a summit and at least one foot to draw anything meaningful.
-    if (summit == null || (startEle == null && endEle == null)) {
-      return const SizedBox.shrink();
-    }
-    final connects =
-        (pass.connects != null && pass.connects!.length == 2) ? pass.connects! : null;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
-        ),
-        child: Column(
-          children: [
-            SizedBox(
-              height: 64,
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _ProfilePainter(
-                  startEle: startEle,
-                  summitEle: summit,
-                  endEle: endEle,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _ProfileFoot(
-                  label: connects?[0] ?? 'Start',
-                  ele: startEle,
-                  align: CrossAxisAlignment.start,
-                ),
-                _ProfileFoot(
-                  label: 'Pass',
-                  ele: summit,
-                  align: CrossAxisAlignment.center,
-                  highlight: true,
-                ),
-                _ProfileFoot(
-                  label: connects?[1] ?? 'Ziel',
-                  ele: endEle,
-                  align: CrossAxisAlignment.end,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProfileFoot extends StatelessWidget {
-  const _ProfileFoot({
-    required this.label,
-    required this.ele,
-    required this.align,
-    this.highlight = false,
-  });
-  final String label;
-  final int? ele;
-  final CrossAxisAlignment align;
-  final bool highlight;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: align,
-        children: [
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            ele == null ? '–' : '$ele m',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: highlight ? AppColors.accent : AppColors.text,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Paints the climb silhouette: a filled triangle-ish profile from the start
-/// foot up to the summit and down to the end foot, scaled to the elevation
-/// span so a big climb looks tall and a gentle one looks flat.
-class _ProfilePainter extends CustomPainter {
-  _ProfilePainter({
-    required this.startEle,
-    required this.summitEle,
-    required this.endEle,
-  });
-  final int? startEle;
-  final int summitEle;
-  final int? endEle;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    var lo = summitEle;
-    if (startEle != null && startEle! < lo) lo = startEle!;
-    if (endEle != null && endEle! < lo) lo = endEle!;
-    final hi = summitEle;
-    final span = (hi - lo).clamp(1, 1 << 30).toDouble();
-
-    double y(int? ele) {
-      final e = (ele ?? lo).toDouble();
-      final t = (e - lo) / span; // 0 at lowest, 1 at summit
-      // Leave a little headroom top & bottom.
-      return size.height - 6 - t * (size.height - 12);
-    }
-
-    final p0 = Offset(0, y(startEle));
-    final p1 = Offset(size.width / 2, y(summitEle));
-    final p2 = Offset(size.width, y(endEle));
-
-    final path = ui.Path()
-      ..moveTo(p0.dx, size.height)
-      ..lineTo(p0.dx, p0.dy)
-      ..lineTo(p1.dx, p1.dy)
-      ..lineTo(p2.dx, p2.dy)
-      ..lineTo(p2.dx, size.height)
-      ..close();
-
-    final fill = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Color(0x66FF6B1A),
-          Color(0x11FF6B1A),
-        ],
-      ).createShader(Offset.zero & size);
-    canvas.drawPath(path, fill);
-
-    final stroke = Paint()
-      ..color = AppColors.accent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeJoin = StrokeJoin.round;
-    canvas.drawPath(
-      ui.Path()
-        ..moveTo(p0.dx, p0.dy)
-        ..lineTo(p1.dx, p1.dy)
-        ..lineTo(p2.dx, p2.dy),
-      stroke,
-    );
-
-    // Summit dot.
-    canvas.drawCircle(p1, 4, Paint()..color = AppColors.accent);
-    canvas.drawCircle(
-      p1,
-      4,
-      Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _ProfilePainter old) =>
-      old.startEle != startEle ||
-      old.summitEle != summitEle ||
-      old.endEle != endEle;
 }
 
 // ─────────────────────────── Facts grid ───────────────────────────

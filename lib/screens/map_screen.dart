@@ -102,6 +102,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   double _rotation = 0;
   bool _didInitialFit = false;
 
+  // Whether the top filter card shows its full controls (date/price/colour
+  // selectors + legends) or is collapsed to just the header + layer toggles, so
+  // the rider can fold it away and explore the map unobstructed.
+  bool _filtersExpanded = true;
+
   // Layer visibility — keeps the map uncluttered by letting the user pick
   // what to see. Passes default off: 99 markers would otherwise clutter the
   // first view, so the rider opts in.
@@ -346,6 +351,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                         child: _FilterCard(
+                          expanded: _filtersExpanded,
+                          onToggleExpand: () => setState(
+                              () => _filtersExpanded = !_filtersExpanded),
                           showFuel: _showFuel,
                           showRides: _showRides,
                           showPasses: _showPasses,
@@ -752,6 +760,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 /// mode selector, and the colour legends.
 class _FilterCard extends StatelessWidget {
   const _FilterCard({
+    required this.expanded,
+    required this.onToggleExpand,
     required this.showFuel,
     required this.showRides,
     required this.showPasses,
@@ -777,6 +787,10 @@ class _FilterCard extends StatelessWidget {
     required this.heatRange,
   });
 
+  /// Whether the lower controls (date/price/colour selectors + legends) show, or
+  /// the card is folded to just its header + layer toggles.
+  final bool expanded;
+  final VoidCallback onToggleExpand;
   final bool showFuel;
   final bool showRides;
   final bool showPasses;
@@ -861,8 +875,11 @@ class _FilterCard extends StatelessWidget {
                 tooltip: 'Pässe',
                 activeColor: AppColors.accent,
               ),
+              const SizedBox(width: 8),
+              _CollapseToggle(expanded: expanded, onTap: onToggleExpand),
             ],
           ),
+          if (expanded) ...[
           const SizedBox(height: 8),
           Text(
             summary.isEmpty ? 'Keine Ebene aktiv' : summary,
@@ -938,6 +955,7 @@ class _FilterCard extends StatelessWidget {
             ),
           ],
           if (showRideLegend) ..._rideLegend(),
+          ],
         ],
       ),
     );
@@ -982,6 +1000,42 @@ class _FilterCard extends StatelessWidget {
       const SizedBox(height: 12),
       _GradientLegend(minLabel: minLabel, maxLabel: maxLabel, caption: caption),
     ];
+  }
+}
+
+/// Chevron that folds the filter card down to just its header (layer toggles
+/// stay reachable) so the map below is unobstructed, and unfolds it again.
+class _CollapseToggle extends StatelessWidget {
+  const _CollapseToggle({required this.expanded, required this.onTap});
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: expanded ? 'Filter einklappen' : 'Filter ausklappen',
+      child: Material(
+        color: AppColors.surfaceHi,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.gridLine),
+            ),
+            child: Icon(
+              expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
