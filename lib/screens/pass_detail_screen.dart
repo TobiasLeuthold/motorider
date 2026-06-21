@@ -39,6 +39,7 @@ class PassDetailScreen extends StatelessWidget {
           const SizedBox(height: 4),
           if (pass.geometry.length >= 2) ...[
             _SegmentMap(pass: pass),
+            _Endpoints(pass: pass),
             const SizedBox(height: 4),
           ],
           PassElevationChart(pass: pass),
@@ -214,16 +215,16 @@ class _SegmentMapState extends State<_SegmentMap> {
       if (startFoot != null)
         Marker(
           point: startFoot.latLng,
-          width: 16,
-          height: 16,
-          child: const _FootDot(),
+          width: 20,
+          height: 20,
+          child: const _FootMarker(isStart: true),
         ),
       if (endFoot != null)
         Marker(
           point: endFoot.latLng,
-          width: 16,
-          height: 16,
-          child: const _FootDot(),
+          width: 20,
+          height: 20,
+          child: const _FootMarker(isStart: false),
         ),
     ];
 
@@ -310,15 +311,75 @@ class _ColMarker extends StatelessWidget {
   }
 }
 
-class _FootDot extends StatelessWidget {
-  const _FootDot();
+/// A foot marker on the segment map: green "start" / red "end" so the rider can
+/// see exactly where the timed foot-to-foot segment begins and ends.
+class _FootMarker extends StatelessWidget {
+  const _FootMarker({required this.isStart});
+  final bool isStart;
   @override
   Widget build(BuildContext context) {
+    final color =
+        isStart ? const Color(0xFF34D399) : const Color(0xFFE0352B);
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.accentSoft,
+        color: color,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
+        border: Border.all(color: Colors.white, width: 2.5),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 4),
+        ],
+      ),
+      child: Icon(
+        isStart ? Icons.play_arrow_rounded : Icons.flag_rounded,
+        size: 12,
+        color: Colors.white,
+      ),
+    );
+  }
+}
+
+/// Caption under the segment map naming exactly where the timed segment starts
+/// and ends — the two feet, with place + elevation — so the rider sees what the
+/// times and speeds are measured over.
+class _Endpoints extends StatelessWidget {
+  const _Endpoints({required this.pass});
+  final Pass pass;
+
+  @override
+  Widget build(BuildContext context) {
+    final start = passFootLabel(pass, isStart: true);
+    final end = passFootLabel(pass, isStart: false);
+    if (start == null && end == null) return const SizedBox.shrink();
+
+    Widget chip(IconData icon, Color color, String? text) => Expanded(
+          child: Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  text ?? '–',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+      child: Row(
+        children: [
+          chip(Icons.play_arrow_rounded, const Color(0xFF34D399), start),
+          const SizedBox(width: 8),
+          chip(Icons.flag_rounded, const Color(0xFFE0352B), end),
+        ],
       ),
     );
   }
@@ -456,7 +517,7 @@ class _HistorySection extends StatelessWidget {
           if (!progress.crossed)
             const _NotExplored()
           else ...[
-            _SpeedSummary(progress: progress),
+            _DirectionSummary(progress: progress),
             const SizedBox(height: 12),
             for (var i = 0; i < progress.crossings.length; i++) ...[
               if (i > 0) const SizedBox(height: 8),
@@ -526,90 +587,114 @@ class _NotExplored extends StatelessWidget {
   }
 }
 
-/// Best / mean / total-time roll-up across all measured crossings.
-class _SpeedSummary extends StatelessWidget {
-  const _SpeedSummary({required this.progress});
+/// Per-direction roll-up: one card for each way the pass has been ridden (the
+/// two ascents differ, so they're kept apart), each with its fastest fixed-
+/// distance average and a count/best-time/Ø line, plus the total moving time.
+class _DirectionSummary extends StatelessWidget {
+  const _DirectionSummary({required this.progress});
   final PassProgress progress;
 
   @override
   Widget build(BuildContext context) {
-    final best = progress.bestSpeedKmh;
-    final mean = progress.meanSpeedKmh;
+    final dirs = progress.directions;
+    // Crossed (hysteresis) but no clean foot-to-foot traversal to time yet.
+    if (dirs.isEmpty) return const SizedBox.shrink();
     final total = progress.totalTimeOnPassS;
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: _SummaryTile(
-            icon: Icons.bolt_rounded,
-            label: 'Bestschnitt',
-            value: formatSpeedKmh(best),
-            tint: AppColors.accent,
+        for (var i = 0; i < dirs.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _DirectionCard(stats: dirs[i]),
+        ],
+        if (total > 0) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.timer_outlined,
+                  size: 15, color: AppColors.textMuted),
+              const SizedBox(width: 6),
+              Text(
+                'Gesamte Fahrzeit am Pass: ${formatPassDuration(total)}',
+                style:
+                    const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _SummaryTile(
-            icon: Icons.speed_rounded,
-            label: 'Ø Schnitt',
-            value: formatSpeedKmh(mean),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _SummaryTile(
-            icon: Icons.timer_outlined,
-            label: 'Zeit am Pass',
-            value: formatPassDuration(total),
-          ),
-        ),
+        ],
       ],
     );
   }
 }
 
-class _SummaryTile extends StatelessWidget {
-  const _SummaryTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.tint,
-  });
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color? tint;
+class _DirectionCard extends StatelessWidget {
+  const _DirectionCard({required this.stats});
+  final DirectionStats stats;
 
   @override
   Widget build(BuildContext context) {
-    final color = tint ?? AppColors.accentSoft;
+    final d = stats;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.gridLine.withValues(alpha: 0.6)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: AppColors.text,
-              letterSpacing: -0.3,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.arrow_forward_rounded,
+                        size: 15, color: AppColors.accentSoft),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        d.label ?? 'Überquerung',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  directionStatLine(d),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+                ),
+              ],
             ),
           ),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 10.5, color: AppColors.textMuted),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                formatSpeedKmh(d.bestSpeedKmh),
+                style: const TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.accent,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const Text('Bestschnitt',
+                  style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+            ],
           ),
         ],
       ),
@@ -629,7 +714,7 @@ class _CrossingRow extends StatelessWidget {
     final c = crossing;
     final dir = c.directionLabel;
     final speed = formatSpeedKmh(c.avgSpeedKmh);
-    final dur = formatPassDuration(c.durationS);
+    final dur = formatPassDuration(c.movingTimeS); // moving time, stops excluded
     final facts = <String>[
       if (speed != '–') speed,
       if (dur != '–') dur,

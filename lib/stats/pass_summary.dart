@@ -48,6 +48,61 @@ String? fastestCrossingHeadline(FastestCrossing? fastest) {
   return '${fastest.pass.name} · ${formatSpeedKmh(fastest.avgSpeedKmh)}';
 }
 
+/// Sub-line for the fastest crossing — its direction and moving time, e.g.
+/// `'Realp → Gletsch · 12:05'`. Null when neither is known.
+String? fastestCrossingSubline(FastestCrossing? fastest) {
+  if (fastest == null) return null;
+  final parts = <String>[];
+  if (fastest.directionLabel != null) parts.add(fastest.directionLabel!);
+  if (fastest.movingTimeS != null) {
+    parts.add(formatPassDuration(fastest.movingTimeS));
+  }
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
+/// One crossing-history row's stat text, e.g. `'Realp → Gletsch · 12:05 · 56 km/h'`
+/// (moving time, fixed-distance speed). Missing parts are dropped; may be empty
+/// for a crossing that wasn't a clean foot-to-foot traversal.
+String crossingStatLine(PassCrossing c) {
+  final parts = <String>[];
+  if (c.directionLabel != null) parts.add(c.directionLabel!);
+  if (c.movingTimeS != null) parts.add(formatPassDuration(c.movingTimeS));
+  if (c.avgSpeedKmh != null) parts.add(formatSpeedKmh(c.avgSpeedKmh));
+  return parts.join(' · ');
+}
+
+/// Complementary stat line for one direction, meant to sit next to a prominent
+/// best-speed figure: `'3× · Bestzeit 12:05 · Ø 48 km/h'`. The fixed street
+/// distance makes the speeds comparable; only shows Ø once there's more than one
+/// run.
+String directionStatLine(DirectionStats d) {
+  final parts = <String>['${d.count}×'];
+  if (d.bestTimeS != null) {
+    parts.add('Bestzeit ${formatPassDuration(d.bestTimeS)}');
+  }
+  if (d.meanSpeedKmh != null && d.count > 1) {
+    parts.add('Ø ${formatSpeedKmh(d.meanSpeedKmh)}');
+  }
+  return parts.join(' · ');
+}
+
+/// Label for one foot of the pass — the connected place (when known) with the
+/// foot elevation, e.g. `'Realp · 1538 m'`. [isStart] selects the start vs end
+/// foot. Null when neither a name nor an elevation is available.
+String? passFootLabel(Pass p, {required bool isStart}) {
+  final foot = isStart ? p.start : p.end;
+  final names = p.connects;
+  final name = (names != null && names.length >= 2)
+      ? (isStart ? names.first : names.last).trim()
+      : null;
+  final ele = foot?.ele;
+  final hasName = name != null && name.isNotEmpty;
+  if (hasName && ele != null) return '$name · $ele m';
+  if (hasName) return name;
+  if (ele != null) return '$ele m';
+  return null;
+}
+
 /// A short German recap line for ONE pass's personal history, used as the
 /// detail-screen subtitle and elsewhere. Examples:
 ///   not crossed        → `'Noch nicht erkundet'`

@@ -352,15 +352,22 @@ List<Crossing> detectCrossingsInTrack(
 /// downsampled polyline, tight enough to exclude a parallel valley road.
 const double kCorridorHalfWidthM = 120.0;
 
-/// Speeds above this (≈ 216 km/h) are treated as GPS outliers and dropped from
-/// the recorded-speed average — a motorcycle on a pass never sustains them, so
-/// such a value is a bad fix, not a real reading.
-const double kMaxPlausibleSpeedMs = 60.0;
+/// Below this implied leg speed (≈ 5 km/h) the rider is treated as stopped — a
+/// red light, a junction, a photo halt — and that leg's time is excluded from
+/// the moving time. Genuine slow riding (a tight hairpin) stays well above it.
+const double kStoppedSpeedMs = 1.4;
 
-/// A point-to-point implied speed above this (≈ 252 km/h) marks a GPS gap /
-/// teleport; the leg is ignored when summing corridor distance/time for the
-/// distance ÷ time fallback so one bad fix can't invent kilometres.
-const double kMaxPlausibleLegSpeedMs = 70.0;
+/// To time a crossing as a fixed-distance foot-to-foot traversal, the ride must
+/// actually pass within this of BOTH the [Pass.start] and [Pass.end] feet. A
+/// ride that started mid-pass, or went up one side and back down the same one,
+/// never reaches a foot — it still counts as a crossing but gets no comparable
+/// speed (the fixed street distance wasn't actually travelled).
+const double kFootReachedM = 250.0;
+
+/// Sanity ceiling for a fixed-distance pass average (km/h). A value above this
+/// means the moving time was implausibly short (a GPS artefact), so the speed is
+/// dropped rather than shown.
+const double kMaxPassAvgSpeedKmh = 130.0;
 
 /// Which way the rider travelled over a pass segment, relative to the dataset's
 /// [Pass.start] → [Pass.end] orientation.
@@ -382,6 +389,7 @@ class PassCrossing {
     required this.at,
     required this.direction,
     this.avgSpeedKmh,
+    this.movingTimeS,
     this.durationS,
     this.directionLabel,
   });
@@ -393,11 +401,19 @@ class PassCrossing {
 
   final PassDirection direction;
 
-  /// Average speed over the corridor portion, in km/h. Null when it could not
-  /// be measured (e.g. a single corridor fix, or no time elapsed).
+  /// Average speed over the pass, in km/h, from the pass's FIXED street distance
+  /// ([Pass.lengthKm]) ÷ [movingTimeS] — never the GPS track length (which
+  /// wobbles run to run), and with stopped time excluded. Null when this wasn't
+  /// a genuine foot-to-foot traversal or the street length is unknown.
   final double? avgSpeedKmh;
 
-  /// Seconds spent within the corridor for this crossing. Null when unknown.
+  /// Moving time over the foot-to-foot traversal, in seconds, with stopped legs
+  /// (red lights etc.) removed. The denominator of [avgSpeedKmh] and the time
+  /// shown to the rider. Null when not a measurable traversal.
+  final int? movingTimeS;
+
+  /// Total wall-clock seconds inside the corridor, INCLUDING any stops — kept for
+  /// reference (e.g. a "standing N min" readout). Null when unknown.
   final int? durationS;
 
   /// Human-readable German direction label, e.g. `'Realp → Gletsch'`, or a
@@ -519,46 +535,49 @@ CorridorWindow? corridorWindow(
   );
 }
 
-/// Average a window's recorded GPS speeds (m/s → km/h), ignoring null/zero and
-/// implausibly fast outliers. Returns null when no usable reading remains.
-double? _avgRecordedSpeedKmh(RideTrack track, int lo, int hi) {
-  final speeds = track.speedsMs;
-  if (speeds.isEmpty) return null;
-  var sum = 0.0;
-  var n = 0;
-  for (var i = lo; i <= hi && i < speeds.length; i++) {
-    final v = speeds[i];
-    if (v == null || v <= 0) continue;
-    if (v > kMaxPlausibleSpeedMs) continue; // outlier fix
-    sum += v;
-    n++;
-  }
-  if (n == 0) return null;
-  return (sum / n) * 3.6;
-}
-
-/// Corridor distance (m) over the window, skipping legs whose implied speed is
-/// an obvious GPS teleport, and the total elapsed time (s) end-to-end.
-({double distanceM, int elapsedS}) _corridorDistanceTime(
-    RideTrack track, int lo, int hi) {
-  var dist = 0.0;
+/// Total moving time over the legs `[lo, hi]`, in milliseconds, with stopped
+/// legs (implied speed below [kStoppedSpeedMs]) removed — so a red light or a
+/// photo halt doesn't inflate it. Pure.
+double _movingTimeMs(RideTrack track, int lo, int hi) {
+  var ms = 0.0;
   for (var i = lo + 1; i <= hi; i++) {
+    final dt =
+        track.times[i].difference(track.times[i - 1]).inMilliseconds.toDouble();
+    if (dt <= 0) continue;
     final segM = haversineMeters(track.points[i - 1], track.points[i]);
-    final dt = track.times[i].difference(track.times[i - 1]).inMilliseconds;
-    if (dt > 0) {
-      final legSpeed = segM / (dt / 1000.0);
-      if (legSpeed > kMaxPlausibleLegSpeedMs) continue; // GPS gap / teleport
-    }
-    dist += segM;
+    if (segM / (dt / 1000.0) < kStoppedSpeedMs) continue; // stopped — exclude
+    ms += dt;
   }
-  final elapsed = track.times[hi].difference(track.times[lo]).inSeconds;
-  return (distanceM: dist, elapsedS: elapsed);
+  return ms;
 }
 
-/// Measure a single crossing's direction, average speed and duration over its
-/// corridor window. Pure and fully unit-testable. Returns null when [crossing]
-/// doesn't correspond to a real corridor traversal (trigger fix not in the
-/// corridor — e.g. a ride that only clips the corridor edge).
+/// The index in `[lo, hi]` whose fix is nearest [foot], plus that distance.
+({int index, double distanceM}) _nearestFix(
+    RideTrack track, int lo, int hi, PassPoint foot) {
+  var bestI = lo;
+  var bestD = double.infinity;
+  for (var i = lo; i <= hi; i++) {
+    final d = haversineMeters(track.points[i], foot.latLng);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  return (index: bestI, distanceM: bestD);
+}
+
+/// Measure a single crossing as a fixed-distance, foot-to-foot traversal: the
+/// direction, the moving time between the two defined feet (stops removed), and
+/// the average speed from the pass's known street distance ÷ that moving time.
+/// Pure and fully unit-testable. Returns null when [crossing] doesn't correspond
+/// to a real corridor traversal (trigger fix not in the corridor).
+///
+/// Why fixed distance: integrating the GPS track gives a slightly different
+/// length each ride (10 km one time, 11 the next), so dividing it by time isn't
+/// comparable. The pass's [Pass.lengthKm] is one fixed number, so between rides
+/// only the (stop-free) time varies — exactly what makes two ascents comparable.
+/// When the ride didn't actually reach both feet, or the length is unknown, the
+/// speed is left null (the fixed street distance wasn't really ridden).
 PassCrossing? crossingStats(
   RideTrack track,
   Pass pass,
@@ -574,25 +593,52 @@ PassCrossing? crossingStats(
   if (win == null) return null;
 
   final lo = win.startIndex, hi = win.endIndex;
-  final dt = _corridorDistanceTime(track, lo, hi);
-  final elapsedS = dt.elapsedS;
+  // Total wall-clock in the corridor (incl. stops), kept for reference.
+  final elapsedS = track.times[hi].difference(track.times[lo]).inSeconds;
 
-  // Prefer recorded speeds; fall back to corridor distance ÷ elapsed time.
-  double? avgKmh = _avgRecordedSpeedKmh(track, lo, hi);
-  if (avgKmh == null && elapsedS > 0 && dt.distanceM > 0) {
-    avgKmh = (dt.distanceM / elapsedS) * 3.6;
+  PassDirection direction;
+  int? movingTimeS;
+  double? avgKmh;
+
+  final s = pass.start, e = pass.end;
+  final start = s != null ? _nearestFix(track, lo, hi, s) : null;
+  final end = e != null ? _nearestFix(track, lo, hi, e) : null;
+
+  if (start != null &&
+      end != null &&
+      start.index != end.index &&
+      start.distanceM <= kFootReachedM &&
+      end.distanceM <= kFootReachedM) {
+    // Genuine foot-to-foot traversal: time it between the two feet only.
+    direction = start.index < end.index
+        ? PassDirection.startToEnd
+        : PassDirection.endToStart;
+    final a = start.index < end.index ? start.index : end.index;
+    final b = start.index < end.index ? end.index : start.index;
+    final movingMs = _movingTimeMs(track, a, b);
+    if (movingMs > 0) {
+      movingTimeS = (movingMs / 1000).round();
+      final len = pass.lengthKm;
+      if (len != null && len > 0) {
+        final kmh = len / (movingMs / 3600000.0);
+        if (kmh > 0 && kmh <= kMaxPassAvgSpeedKmh) avgKmh = kmh;
+      }
+    }
+  } else {
+    // Not a clean foot-to-foot traversal (started mid-pass, or up-and-back the
+    // same side): still a crossing, but no comparable fixed-distance speed.
+    final near = win.entryNearStartFoot;
+    direction = near == null
+        ? PassDirection.unknown
+        : (near ? PassDirection.startToEnd : PassDirection.endToStart);
   }
-
-  final near = win.entryNearStartFoot;
-  final direction = near == null
-      ? PassDirection.unknown
-      : (near ? PassDirection.startToEnd : PassDirection.endToStart);
 
   return PassCrossing(
     rideId: crossing.rideId,
     at: crossing.at,
     direction: direction,
     avgSpeedKmh: avgKmh,
+    movingTimeS: movingTimeS,
     durationS: elapsedS > 0 ? elapsedS : null,
     directionLabel: passDirectionLabel(pass, direction),
   );
@@ -653,14 +699,88 @@ class PassProgress {
     return n == 0 ? null : sum / n;
   }
 
-  /// Total time spent on this pass across all measured crossings, in seconds.
+  /// Total moving time on this pass across all measured crossings, in seconds
+  /// (stops excluded; falls back to corridor elapsed for any crossing without a
+  /// measured moving time).
   int get totalTimeOnPassS {
     var s = 0;
     for (final c in crossings) {
-      s += c.durationS ?? 0;
+      s += c.movingTimeS ?? c.durationS ?? 0;
     }
     return s;
   }
+
+  /// Per-direction roll-up over the two ways the pass can be ridden. Only
+  /// directions with at least one *measured* (foot-to-foot, fixed-distance)
+  /// crossing appear. The two ascents differ (one side climbs more), so these
+  /// are kept apart rather than pooled.
+  List<DirectionStats> get directions {
+    final out = <DirectionStats>[];
+    for (final d in const [
+      PassDirection.startToEnd,
+      PassDirection.endToStart,
+    ]) {
+      final s = _directionStats(d);
+      if (s.count > 0) out.add(s);
+    }
+    return out;
+  }
+
+  DirectionStats _directionStats(PassDirection dir) {
+    double? best;
+    int? bestTimeS;
+    var sum = 0.0;
+    var n = 0;
+    for (final c in crossings) {
+      if (c.direction != dir) continue;
+      final v = c.avgSpeedKmh;
+      if (v == null) continue; // only fixed-distance-measured traversals
+      n++;
+      sum += v;
+      if (best == null || v > best) {
+        best = v;
+        bestTimeS = c.movingTimeS;
+      }
+    }
+    return DirectionStats(
+      direction: dir,
+      label: passDirectionLabel(pass, dir),
+      count: n,
+      bestSpeedKmh: best,
+      bestTimeS: bestTimeS,
+      meanSpeedKmh: n == 0 ? null : sum / n,
+    );
+  }
+}
+
+/// Per-direction summary for a pass: how many measured crossings this way, the
+/// fastest (and its moving time), and the average — all over the FIXED segment
+/// distance, so the numbers are directly comparable between rides.
+class DirectionStats {
+  const DirectionStats({
+    required this.direction,
+    required this.label,
+    required this.count,
+    this.bestSpeedKmh,
+    this.bestTimeS,
+    this.meanSpeedKmh,
+  });
+
+  final PassDirection direction;
+
+  /// e.g. `'Realp → Gletsch'`, or an arrow when place names are unavailable.
+  final String? label;
+
+  /// Number of measured (fixed-distance) crossings in this direction.
+  final int count;
+
+  /// Fastest average speed (km/h) achieved this way, and the moving time of that
+  /// fastest run (seconds). Null when nothing measured.
+  final double? bestSpeedKmh;
+  final int? bestTimeS;
+
+  /// Mean of the per-crossing average speeds (km/h) this way. Null when none.
+  final double? meanSpeedKmh;
 }
 
 /// The single fastest pass crossing across the whole collection: which pass and
@@ -671,12 +791,21 @@ class FastestCrossing {
     required this.avgSpeedKmh,
     required this.at,
     required this.rideId,
+    this.directionLabel,
+    this.movingTimeS,
   });
 
   final Pass pass;
   final double avgSpeedKmh;
   final DateTime at;
   final String rideId;
+
+  /// Which way this fastest crossing was ridden (e.g. `'Realp → Gletsch'`), or
+  /// null when undecidable.
+  final String? directionLabel;
+
+  /// Moving time of this fastest crossing, in seconds, or null.
+  final int? movingTimeS;
 }
 
 /// Collection-wide totals derived from the per-pass progress.
@@ -829,9 +958,10 @@ CollectionStats _aggregate(List<Pass> passes, List<PassProgress> progress) {
     if (mostCrossed == null || p.count > mostCrossed.count) {
       mostCrossed = p;
     }
-    // Per-crossing roll-ups: total time on passes + the single fastest crossing.
+    // Per-crossing roll-ups: total moving time on passes + the single fastest
+    // (fixed-distance) crossing anywhere.
     for (final c in p.crossings) {
-      totalTimeOnPassesS += c.durationS ?? 0;
+      totalTimeOnPassesS += c.movingTimeS ?? c.durationS ?? 0;
       final v = c.avgSpeedKmh;
       if (v != null && (fastest == null || v > fastest.avgSpeedKmh)) {
         fastest = FastestCrossing(
@@ -839,6 +969,8 @@ CollectionStats _aggregate(List<Pass> passes, List<PassProgress> progress) {
           avgSpeedKmh: v,
           at: c.at,
           rideId: c.rideId,
+          directionLabel: c.directionLabel,
+          movingTimeS: c.movingTimeS,
         );
       }
     }

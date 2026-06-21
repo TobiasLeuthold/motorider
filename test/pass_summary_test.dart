@@ -109,6 +109,107 @@ void main() {
     });
   });
 
+  group('fastestCrossingSubline', () {
+    FastestCrossing f({String? dir, int? movingS}) => FastestCrossing(
+          pass: _pass(),
+          avgSpeedKmh: 90,
+          at: DateTime(2026, 6, 1),
+          rideId: 'r',
+          directionLabel: dir,
+          movingTimeS: movingS,
+        );
+    test('direction + moving time', () {
+      expect(fastestCrossingSubline(f(dir: 'Realp → Gletsch', movingS: 725)),
+          'Realp → Gletsch · 12:05');
+    });
+    test('only one part present', () {
+      expect(fastestCrossingSubline(f(dir: null, movingS: 725)), '12:05');
+      expect(fastestCrossingSubline(f(dir: '↑', movingS: null)), '↑');
+    });
+    test('null when no fastest', () {
+      expect(fastestCrossingSubline(null), isNull);
+    });
+  });
+
+  group('crossingStatLine', () {
+    test('direction · moving time · fixed-distance speed', () {
+      final c = PassCrossing(
+        rideId: 'r',
+        at: DateTime(2026, 6, 1),
+        direction: PassDirection.startToEnd,
+        directionLabel: 'Realp → Gletsch',
+        avgSpeedKmh: 64,
+        movingTimeS: 420,
+      );
+      expect(crossingStatLine(c), 'Realp → Gletsch · 7:00 · 64 km/h');
+    });
+    test('drops missing parts (unmeasured traversal keeps only the label)', () {
+      final c = PassCrossing(
+        rideId: 'r',
+        at: DateTime(2026, 6, 1),
+        direction: PassDirection.startToEnd,
+        directionLabel: '↑',
+      );
+      expect(crossingStatLine(c), '↑');
+    });
+  });
+
+  group('directionStatLine', () {
+    test('count · best time · Ø, comparable via the fixed distance', () {
+      const d = DirectionStats(
+        direction: PassDirection.startToEnd,
+        label: 'Realp → Gletsch',
+        count: 3,
+        bestSpeedKmh: 88,
+        bestTimeS: 360,
+        meanSpeedKmh: 70,
+      );
+      expect(directionStatLine(d), '3× · Bestzeit 6:00 · Ø 70 km/h');
+    });
+    test('a single run drops the Ø', () {
+      const d = DirectionStats(
+        direction: PassDirection.endToStart,
+        label: 'Gletsch → Realp',
+        count: 1,
+        bestSpeedKmh: 64,
+        bestTimeS: 420,
+        meanSpeedKmh: 64,
+      );
+      expect(directionStatLine(d), '1× · Bestzeit 7:00');
+    });
+  });
+
+  group('passFootLabel', () {
+    Pass footPass({
+      List<String>? connects = const ['Realp', 'Gletsch'],
+      int? startEle = 1538,
+      int? endEle = 1757,
+    }) =>
+        Pass(
+          name: 'F',
+          lat: 46.5,
+          lon: 8.4,
+          cantons: const ['UR'],
+          connects: connects,
+          start: PassPoint(lat: 46.6, lon: 8.49, ele: startEle),
+          end: PassPoint(lat: 46.56, lon: 8.36, ele: endEle),
+        );
+    test('place · elevation for each foot', () {
+      expect(passFootLabel(footPass(), isStart: true), 'Realp · 1538 m');
+      expect(passFootLabel(footPass(), isStart: false), 'Gletsch · 1757 m');
+    });
+    test('elevation only when the place is unknown', () {
+      expect(passFootLabel(footPass(connects: null), isStart: true), '1538 m');
+    });
+    test('place only when the elevation is unknown', () {
+      expect(passFootLabel(footPass(startEle: null), isStart: true), 'Realp');
+    });
+    test('null when neither is known', () {
+      expect(passFootLabel(footPass(connects: null, startEle: null), isStart: true),
+          isNull);
+    });
+  });
+
   group('passHistorySummary', () {
     test('uncrossed', () {
       expect(passHistorySummary(_progress(_pass())), 'Noch nicht erkundet');

@@ -465,6 +465,7 @@ class _FastestBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dateFmt = DateFormat('dd.MM.yyyy');
+    final sub = fastestCrossingSubline(fastest); // 'Realp → Gletsch · 12:05'
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(18),
@@ -521,10 +522,21 @@ class _FastestBanner extends StatelessWidget {
                         color: AppColors.text,
                       ),
                     ),
+                    if (sub != null)
+                      Text(
+                        sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.accentSoft,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     Text(
                       dateFmt.format(fastest.at),
                       style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: 11.5,
                         color: AppColors.textMuted,
                       ),
                     ),
