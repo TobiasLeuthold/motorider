@@ -3,9 +3,10 @@ import 'package:latlong2/latlong.dart';
 import 'package:motorider/services/geo.dart';
 import 'package:motorider/stats/pass_explorer.dart';
 
-/// Stage B — per-crossing stats (direction, average speed, duration over a
-/// pass). These exercise the PURE corridor/speed/direction math in isolation
-/// from the database, the map and any Flutter binding.
+/// Per-crossing stats — now a FIXED-distance, foot-to-foot, moving-time metric:
+/// average speed = the pass's known street length ÷ the (stop-free) time taken
+/// between its two defined feet. These exercise the PURE corridor/timing math in
+/// isolation from the database, the map and any Flutter binding.
 ///
 /// Geometry trick: every fixture pass runs dead-straight north–south through a
 /// reference col along a single meridian, so a point [_north]`(x)` of the col
@@ -20,10 +21,12 @@ LatLng _north(double metresNorth) =>
     LatLng(_col.latitude + metresNorth / _mPerLat, _col.longitude);
 
 /// A north–south segment pass through [_col]: south foot is [start], north foot
-/// is [end], geometry is the straight meridian line south-foot → col → north
-/// foot. [footM] is how far each foot sits from the col.
+/// is [end], geometry is the straight meridian south-foot → col → north-foot.
+/// [footM] is how far each foot sits from the col; [lengthKm] is the pass's
+/// FIXED street distance, defaulting to the true foot-to-foot length.
 Pass _segPass({
-  double footM = 5000,
+  double footM = 4000,
+  double? lengthKm,
   List<String>? connects,
   int? ele = 2400,
 }) =>
@@ -34,37 +37,25 @@ Pass _segPass({
       ele: ele,
       cantons: const ['UR'],
       connects: connects,
-      start: PassPoint(lat: _north(-footM).latitude, lon: _col.longitude, ele: 1500),
+      start:
+          PassPoint(lat: _north(-footM).latitude, lon: _col.longitude, ele: 1500),
       end: PassPoint(lat: _north(footM).latitude, lon: _col.longitude, ele: 1600),
+      lengthKm: lengthKm ?? (2 * footM / 1000.0),
       geometry: [_north(-footM), _col, _north(footM)],
     );
 
-/// A ride track from [pts] with explicit per-fix [times]; optional parallel
-/// [speeds] (m/s). Distances/speeds are controlled by the caller.
-RideTrack _trackT(
-  String id,
-  List<LatLng> pts,
-  List<DateTime> times, {
-  List<double?> speeds = const [],
-}) =>
-    RideTrack(rideId: id, points: pts, times: times, speedsMs: speeds);
+/// A ride track from [pts] with explicit per-fix [times].
+RideTrack _trackT(String id, List<LatLng> pts, List<DateTime> times) =>
+    RideTrack(rideId: id, points: pts, times: times, speedsMs: const []);
 
-/// Build a constant-cadence track that walks the given north-offsets (metres),
-/// one fix every [stepS] seconds. Returns the track; if [speeds] given it's
-/// attached as the recorded-speed channel.
-RideTrack _walk(
-  String id,
-  List<double> offsetsM, {
-  int stepS = 10,
-  DateTime? start,
-  List<double?> speeds = const [],
-}) {
-  final t0 = start ?? DateTime(2026, 6, 1, 10);
+/// A constant-cadence track walking the given north-offsets (metres), one fix
+/// every [stepS] seconds.
+RideTrack _walk(String id, List<double> offsetsM, {int stepS = 10}) {
+  final t0 = DateTime(2026, 6, 1, 10);
   return _trackT(
     id,
     [for (final m in offsetsM) _north(m)],
     [for (var i = 0; i < offsetsM.length; i++) t0.add(Duration(seconds: i * stepS))],
-    speeds: speeds,
   );
 }
 
@@ -72,11 +63,13 @@ RideTrack _walk(
 PassProgress _explore(Pass pass, RideTrack ride) =>
     explorePasses([pass], [ride]).progress.single;
 
+DirectionStats _dir(PassProgress p, PassDirection d) =>
+    p.directions.firstWhere((s) => s.direction == d);
+
 void main() {
   // ─────────────────────────── corridor membership ────────────────────────
   group('isInCorridor', () {
-    final pass = _segPass();
-    final geom = pass.geometry;
+    final geom = _segPass().geometry;
 
     test('a point on the segment line is inside the corridor', () {
       expect(isInCorridor(_north(0), geom), isTrue);
@@ -84,7 +77,6 @@ void main() {
     });
 
     test('a point 80 m to the side is inside (< 120 m half-width)', () {
-      // Shift east by ~80 m at this latitude.
       final mPerLon = 111195.0 * 0.687; // cos(46.57°) ≈ 0.687
       final p = LatLng(_col.latitude, _col.longitude + 80 / mPerLon);
       expect(isInCorridor(p, geom), isTrue);
@@ -95,19 +87,6 @@ void main() {
       final p = LatLng(_col.latitude, _col.longitude + 250 / mPerLon);
       expect(isInCorridor(p, geom), isFalse);
     });
-
-    test('with degenerate geometry it falls back to nearness to a foot', () {
-      final s = PassPoint(lat: _north(-100).latitude, lon: _col.longitude);
-      // No polyline, but within 120 m of the start foot.
-      expect(
-        isInCorridor(_north(-150), const [], startFoot: s),
-        isTrue, // 50 m from the foot
-      );
-      expect(
-        isInCorridor(_north(-400), const [], startFoot: s),
-        isFalse, // 300 m from the foot
-      );
-    });
   });
 
   // ─────────────────────────── corridor window ────────────────────────────
@@ -115,25 +94,18 @@ void main() {
     final pass = _segPass(footM: 5000);
 
     test('grows to the maximal run of corridor fixes around the trigger', () {
-      // Fixes: far south (outside), then a run through the corridor, then far
-      // north (outside). The trigger is the col fix (index 3).
       final ride = _walk('r', [-8000, -4000, -1000, 0, 1000, 4000, 8000]);
       final crossings = detectCrossingsInTrack(ride, pass.latLng);
       expect(crossings, hasLength(1));
-      final win = corridorWindow(ride, pass, triggerIndex: crossings.first.triggerIndex);
+      final win =
+          corridorWindow(ride, pass, triggerIndex: crossings.first.triggerIndex);
       expect(win, isNotNull);
-      // -4000..4000 are within the 5 km segment + corridor; ±8000 are not.
       expect(win!.startIndex, 1);
       expect(win.endIndex, 5);
-      // Entered nearer the south (start) foot → start→end.
-      expect(win.entryNearStartFoot, isTrue);
     });
 
     test('returns null when the trigger fix is not actually in the corridor',
         () {
-      // A ride that passes within 250 m of the col (so the hysteresis detector
-      // FIRES) but stays ~200 m to the SIDE of the road the whole time — it
-      // only clips near the col, never enters the corridor.
       final mPerLon = 111195.0 * 0.687;
       LatLng side(double northM) =>
           LatLng(_col.latitude + northM / _mPerLat, _col.longitude + 200 / mPerLon);
@@ -145,58 +117,78 @@ void main() {
       );
       final crossings = detectCrossingsInTrack(ride, pass.latLng);
       expect(crossings, hasLength(1), reason: 'within 250 m of col → fires');
-      final win = corridorWindow(ride, pass, triggerIndex: crossings.first.triggerIndex);
+      final win =
+          corridorWindow(ride, pass, triggerIndex: crossings.first.triggerIndex);
       expect(win, isNull, reason: '200 m off the road → not a corridor traversal');
     });
   });
 
-  // ─────────────────── average speed: recorded vs fallback ─────────────────
-  group('crossingStats — average speed', () {
-    final pass = _segPass(footM: 5000);
-
-    test('constant 72 km/h drive-through → correct avgSpeed + duration', () {
-      // 72 km/h = 20 m/s. Walk -4000→4000 in 400 m steps, one fix per step.
-      // 21 fixes, 20 m/s constant. Recorded speeds all 20 m/s.
+  // ───────────────── fixed-distance, moving-time average speed ─────────────
+  group('crossingStats — fixed-distance speed + moving time', () {
+    test('constant-speed foot-to-foot traversal → length ÷ moving time', () {
+      // 8 km pass (feet ±4000), ridden -4000→4000 at 20 m/s (400 m steps, 20 s
+      // each): 20 legs × 20 s = 400 s moving, 8 km / 400 s = 72 km/h.
+      final pass = _segPass(footM: 4000); // lengthKm = 8.0
       final offsets = [for (var m = -4000; m <= 4000; m += 400) m.toDouble()];
-      final speeds = [for (final _ in offsets) 20.0 as double?];
-      // Each 400 m leg at 20 m/s = 20 s.
-      final ride = _walk('r', offsets, stepS: 20, speeds: speeds);
-      final prog = _explore(pass, ride);
-      expect(prog.crossings, hasLength(1));
-      final c = prog.crossings.single;
+      final ride = _walk('r', offsets, stepS: 20);
+      final c = _explore(pass, ride).crossings.single;
       expect(c.avgSpeedKmh, closeTo(72.0, 0.001));
-      // 20 legs × 20 s = 400 s in the corridor.
-      expect(c.durationS, 400);
+      expect(c.movingTimeS, 400);
+      expect(c.durationS, 400); // no stops → moving == elapsed
       expect(c.direction, PassDirection.startToEnd);
     });
 
-    test('falls back to corridor distance ÷ time when speeds are absent', () {
-      // No recorded speeds. 8 km of corridor (-4000→4000) covered in 400 s →
-      // 8000 m / 400 s = 20 m/s = 72 km/h.
+    test('uses the pass FIXED street length, not the GPS track length', () {
+      // Same 8 km of GPS path, but the pass's official street length is 10 km.
+      // Speed must come from 10 km ÷ 400 s = 90 km/h, NOT 72.
+      final pass = _segPass(footM: 4000, lengthKm: 10.0);
       final offsets = [for (var m = -4000; m <= 4000; m += 400) m.toDouble()];
-      final ride = _walk('r', offsets, stepS: 20); // no speeds
+      final ride = _walk('r', offsets, stepS: 20);
       final c = _explore(pass, ride).crossings.single;
-      expect(c.avgSpeedKmh, closeTo(72.0, 0.5));
-      expect(c.durationS, 400);
+      expect(c.avgSpeedKmh, closeTo(90.0, 0.001));
+      expect(c.movingTimeS, 400);
     });
 
-    test('falls back when recorded speeds are present but all zero/null', () {
-      final offsets = [for (var m = -4000; m <= 4000; m += 400) m.toDouble()];
-      final speeds = [for (final _ in offsets) 0.0 as double?]; // all zero
-      final ride = _walk('r', offsets, stepS: 20, speeds: speeds);
-      final c = _explore(pass, ride).crossings.single;
-      // Zeroes ignored → distance/time fallback gives ~72 km/h, not 0.
-      expect(c.avgSpeedKmh, closeTo(72.0, 0.5));
+    test('moving time EXCLUDES a red-light stop at the col', () {
+      // -4000→4000 with a 120 s standstill at the col. The 120 s must be dropped
+      // from the moving time (so speed reflects riding, not waiting).
+      final pass = _segPass(footM: 4000); // lengthKm 8.0
+      final t0 = DateTime(2026, 6, 1, 10);
+      final pts = [
+        _north(-4000), _north(-2000), _north(0), _north(0), _north(0),
+        _north(2000), _north(4000),
+      ];
+      final times = <DateTime>[
+        t0,
+        t0.add(const Duration(seconds: 100)), // moving 2 km @ 20 m/s
+        t0.add(const Duration(seconds: 200)), // moving 2 km
+        t0.add(const Duration(seconds: 260)), // STOPPED 60 s
+        t0.add(const Duration(seconds: 320)), // STOPPED 60 s
+        t0.add(const Duration(seconds: 420)), // moving 2 km
+        t0.add(const Duration(seconds: 520)), // moving 2 km
+      ];
+      final c = _explore(pass, _trackT('r', pts, times)).crossings.single;
+      expect(c.movingTimeS, 400, reason: 'the 120 s standstill must be excluded');
+      expect(c.durationS, 520, reason: 'wall-clock still includes the stop');
+      expect(c.avgSpeedKmh, closeTo(72.0, 0.1)); // 8 km / 400 s, NOT / 520 s
     });
 
-    test('recorded-speed average ignores an implausible outlier fix', () {
-      // Three corridor fixes at a steady 20 m/s with one 500 m/s garbage spike.
-      // Mean of the valid three is 20 m/s = 72 km/h; the spike must be dropped.
-      final offsets = [-2000.0, -1000.0, 0.0, 1000.0, 2000.0];
-      final speeds = <double?>[20, 20, 500, 20, 20]; // index 2 is garbage
-      final ride = _walk('r', offsets, stepS: 50, speeds: speeds);
-      final c = _explore(pass, ride).crossings.single;
-      expect(c.avgSpeedKmh, closeTo(72.0, 0.001));
+    test('a ride that does not reach both feet gets no fixed-distance speed', () {
+      // Up the south side to the col and back — never reaches the north foot.
+      final pass = _segPass(footM: 4000);
+      final t0 = DateTime(2026, 6, 1, 10);
+      final ride = _trackT(
+        'r',
+        [_north(-4000), _north(0), _north(-4000)],
+        [t0, t0.add(const Duration(seconds: 200)), t0.add(const Duration(seconds: 400))],
+      );
+      final prog = _explore(pass, ride);
+      expect(prog.count, 1, reason: 'still a crossing');
+      expect(prog.crossings, hasLength(1));
+      expect(prog.crossings.single.avgSpeedKmh, isNull);
+      expect(prog.crossings.single.movingTimeS, isNull);
+      expect(prog.bestSpeedKmh, isNull);
+      expect(prog.directions, isEmpty);
     });
   });
 
@@ -204,7 +196,7 @@ void main() {
   group('crossingStats — direction', () {
     test('south→north over a start(south)→end(north) pass is startToEnd', () {
       final pass = _segPass(connects: ['Süd', 'Nord']);
-      final ride = _walk('r', [-4000, -1000, 0, 1000, 4000], stepS: 20);
+      final ride = _walk('r', [-4000, -2000, 0, 2000, 4000], stepS: 100);
       final c = _explore(pass, ride).crossings.single;
       expect(c.direction, PassDirection.startToEnd);
       expect(c.directionLabel, 'Süd → Nord');
@@ -212,7 +204,7 @@ void main() {
 
     test('north→south is the reverse direction (endToStart)', () {
       final pass = _segPass(connects: ['Süd', 'Nord']);
-      final ride = _walk('r', [4000, 1000, 0, -1000, -4000], stepS: 20);
+      final ride = _walk('r', [4000, 2000, 0, -2000, -4000], stepS: 100);
       final c = _explore(pass, ride).crossings.single;
       expect(c.direction, PassDirection.endToStart);
       expect(c.directionLabel, 'Nord → Süd');
@@ -220,10 +212,10 @@ void main() {
 
     test('falls back to ↑/↓ arrows when connects is missing', () {
       final pass = _segPass(connects: null);
-      final up = _explore(pass, _walk('u', [-4000, 0, 4000], stepS: 20))
+      final up = _explore(pass, _walk('u', [-4000, 0, 4000], stepS: 100))
           .crossings
           .single;
-      final down = _explore(pass, _walk('d', [4000, 0, -4000], stepS: 20))
+      final down = _explore(pass, _walk('d', [4000, 0, -4000], stepS: 100))
           .crossings
           .single;
       expect(up.directionLabel, '↑');
@@ -231,59 +223,60 @@ void main() {
     });
   });
 
-  // ───────────────────────── two crossings, measured ──────────────────────
-  group('two separate crossings each measured independently', () {
-    final pass = _segPass(footM: 4000);
-
-    test('out-and-back: two crossings, opposite directions, own speeds', () {
-      // Leg 1 (south→north) slow at ~36 km/h (10 m/s); go > 3 km past to
-      // re-arm; Leg 2 (north→south) fast at ~72 km/h (20 m/s).
-      // Build offsets + matching times so each corridor leg has its own speed.
-      final offsets = <double>[
-        -3000, -1500, 0, 1500, 3000, // leg 1 (10 m/s)
-        6000, // way past north foot → re-arm (outside corridor)
-        3000, 1500, 0, -1500, -3000, // leg 2 (20 m/s)
-      ];
-      // Times: leg 1 legs are 1500 m @ 10 m/s = 150 s each; the jump out and
-      // back is arbitrary; leg 2 legs are 1500 m @ 20 m/s = 75 s each.
+  // ───────────────── two crossings, kept apart per direction ───────────────
+  group('per-direction roll-up', () {
+    test('out-and-back: each direction keeps its own fastest + average', () {
+      // Leg 1 south→north slow (10 m/s → 36 km/h over the fixed 8 km); jump out
+      // past the north foot to re-arm; leg 2 north→south fast (20 m/s → 72 km/h).
+      final pass = _segPass(footM: 4000, connects: ['Süd', 'Nord']);
+      final offsets = <double>[-4000, 0, 4000, 8000, 4000, 0, -4000];
       final t0 = DateTime(2026, 6, 1, 10);
-      var t = t0;
-      final times = <DateTime>[];
-      void add(int s) {
-        t = t.add(Duration(seconds: s));
-        times.add(t);
-      }
-      times.add(t0); // index 0
-      add(150); add(150); add(150); add(150); // leg 1 (indices 1..4)
-      add(600); // big jump out north (index 5)
-      add(600); // jump back to north foot (index 6, start of leg 2)
-      add(75); add(75); add(75); add(75); // leg 2 (indices 7..10)
-      final ride = _trackT('r', [for (final m in offsets) _north(m)], times);
+      final times = <DateTime>[
+        t0, // -4000
+        t0.add(const Duration(seconds: 400)), // 0   (leg1 4 km @ 10 m/s)
+        t0.add(const Duration(seconds: 800)), // 4000
+        t0.add(const Duration(seconds: 1000)), // 8000 (jump out of corridor)
+        t0.add(const Duration(seconds: 1200)), // 4000 (jump back)
+        t0.add(const Duration(seconds: 1400)), // 0   (leg2 4 km @ 20 m/s)
+        t0.add(const Duration(seconds: 1600)), // -4000
+      ];
+      final prog = _explore(pass, _trackT('r', [for (final m in offsets) _north(m)], times));
 
-      final prog = _explore(pass, ride);
       expect(prog.count, 2, reason: 'genuine out-and-back counts twice');
       expect(prog.crossings, hasLength(2));
-
-      final first = prog.crossings[0]; // chronologically first = leg 1
+      final first = prog.crossings[0];
       final second = prog.crossings[1];
       expect(first.direction, PassDirection.startToEnd);
+      expect(first.avgSpeedKmh, closeTo(36.0, 0.5));
+      expect(first.movingTimeS, 800);
       expect(second.direction, PassDirection.endToStart);
-      // Leg 1 ≈ 36 km/h (distance/time fallback), leg 2 ≈ 72 km/h.
-      expect(first.avgSpeedKmh, closeTo(36.0, 1.0));
-      expect(second.avgSpeedKmh, closeTo(72.0, 1.0));
-      // best/mean aggregates over the two.
-      expect(prog.bestSpeedKmh, closeTo(72.0, 1.0));
-      expect(prog.meanSpeedKmh, closeTo((36.0 + 72.0) / 2, 1.0));
+      expect(second.avgSpeedKmh, closeTo(72.0, 0.5));
+      expect(second.movingTimeS, 400);
+
+      // Split per direction.
+      expect(prog.directions, hasLength(2));
+      final up = _dir(prog, PassDirection.startToEnd);
+      final down = _dir(prog, PassDirection.endToStart);
+      expect(up.count, 1);
+      expect(up.label, 'Süd → Nord');
+      expect(up.bestSpeedKmh, closeTo(36.0, 0.5));
+      expect(up.bestTimeS, 800);
+      expect(down.count, 1);
+      expect(down.label, 'Nord → Süd');
+      expect(down.bestSpeedKmh, closeTo(72.0, 0.5));
+
+      // Pooled aggregates still available.
+      expect(prog.bestSpeedKmh, closeTo(72.0, 0.5));
+      expect(prog.meanSpeedKmh, closeTo((36.0 + 72.0) / 2, 0.5));
     });
   });
 
   // ──────────────────────────── edge clipping ─────────────────────────────
   group('a ride that only clips the corridor edge is not a measured crossing',
       () {
-    final pass = _segPass(footM: 5000);
-
     test('clip near the col but off-road → fires count but no crossing stats',
         () {
+      final pass = _segPass(footM: 5000);
       final mPerLon = 111195.0 * 0.687;
       LatLng side(double northM) =>
           LatLng(_col.latitude + northM / _mPerLat, _col.longitude + 200 / mPerLon);
@@ -291,134 +284,95 @@ void main() {
       final ride = RideTrack(
         rideId: 'r',
         points: [side(-3000), side(-100), side(0), side(100), side(3000)],
-        times: [
-          for (var i = 0; i < 5; i++) t0.add(Duration(seconds: i * 10)),
-        ],
+        times: [for (var i = 0; i < 5; i++) t0.add(Duration(seconds: i * 10))],
       );
       final prog = _explore(pass, ride);
-      // Hysteresis still counts it (within 250 m of the col)...
       expect(prog.count, 1);
-      // ...but no corridor traversal was measured (200 m off the road).
       expect(prog.crossings, isEmpty);
       expect(prog.bestSpeedKmh, isNull);
     });
   });
 
-  // ───────────────────────── GPS-gap robustness ───────────────────────────
-  group('GPS-gap robustness', () {
-    final pass = _segPass(footM: 6000);
-
-    test('a mid-corridor teleport leg does not inflate the fallback speed', () {
-      // A clean 36 km/h run straight over the col (col fix kept, so it fires),
-      // but ONE intermediate fix is a GPS teleport ~50 km off the line and back
-      // within 1 s. The fallback must skip the teleport legs (implausible leg
-      // speed) so the measured speed stays ~36 km/h, not in the hundreds.
-      // Offsets along the meridian: 500 m legs @ 10 m/s = 50 s each; index 2 is
-      // the teleport (a wild outlier in BOTH position and timing).
-      final offsets = <double>[-1500, -1000, -500, 0, 500, 1000, 1500];
+  // ─────────────────── GPS-distance independence ───────────────────────────
+  group('robust to GPS distance noise', () {
+    test('lateral jitter that lengthens the GPS path leaves the speed unchanged',
+        () {
+      // Two rides, identical timing, one with sideways GPS jitter (a longer GPS
+      // path). Because the metric uses the FIXED street length, both report the
+      // same speed.
+      final pass = _segPass(footM: 4000); // 8 km
+      final offsets = [for (var m = -4000; m <= 4000; m += 400) m.toDouble()];
+      final clean = _walk('clean', offsets, stepS: 20);
+      final mPerLon = 111195.0 * 0.687;
       final t0 = DateTime(2026, 6, 1, 10);
-      final pts = [for (final m in offsets) _north(m)];
-      pts[2] = _north(50000); // teleport ~50 km north for one fix
-      final times = <DateTime>[
-        t0,
-        t0.add(const Duration(seconds: 50)),
-        t0.add(const Duration(seconds: 51)), // 1 s jump out
-        t0.add(const Duration(seconds: 52)), // 1 s jump back
-        t0.add(const Duration(seconds: 102)),
-        t0.add(const Duration(seconds: 152)),
-        t0.add(const Duration(seconds: 202)),
-      ];
-      final ride = _trackT('r', pts, times);
-      // The col fix (index 3) is within 250 m → a crossing fires.
-      final crossings = detectCrossingsInTrack(ride, pass.latLng);
-      expect(crossings, isNotEmpty);
-      // The teleport fix is far outside the corridor, so it breaks the
-      // contiguous corridor run; the window is the part containing the col.
-      final c = crossingStats(ride, pass, crossings.first);
-      expect(c, isNotNull);
-      expect(c!.avgSpeedKmh, isNotNull);
-      expect(c.avgSpeedKmh!, lessThan(60.0),
-          reason: 'teleport leg must not inflate the fallback speed');
-      expect(c.avgSpeedKmh!, greaterThan(20.0));
-    });
-
-    test('recorded-speed path is immune to a position teleport entirely', () {
-      // Same shape, but recorded speeds are a steady 10 m/s. The average uses
-      // the recorded channel (not positions), so the answer is an exact
-      // 36 km/h regardless of the bad position fix.
-      final offsets = <double>[-1500, -1000, -500, 0, 500, 1000, 1500];
-      final pts = [for (final m in offsets) _north(m)];
-      pts[2] = _north(50000); // outlier position, but still inside corridor run?
-      // Keep the teleport OUTSIDE the corridor so it splits the run, then make
-      // sure the recorded average over the surviving window is exact.
-      final t0 = DateTime(2026, 6, 1, 10);
-      final times = <DateTime>[
-        for (var i = 0; i < 7; i++) t0.add(Duration(seconds: i * 50)),
-      ];
-      final speeds = <double?>[10, 10, 10, 10, 10, 10, 10];
-      final ride = _trackT('r', pts, times, speeds: speeds);
-      final crossings = detectCrossingsInTrack(ride, pass.latLng);
-      expect(crossings, isNotEmpty);
-      final c = crossingStats(ride, pass, crossings.first);
-      expect(c, isNotNull);
-      expect(c!.avgSpeedKmh, closeTo(36.0, 0.001));
+      final jittery = RideTrack(
+        rideId: 'jit',
+        points: [
+          for (var i = 0; i < offsets.length; i++)
+            LatLng(_north(offsets[i]).latitude,
+                _col.longitude + (i.isEven ? 60 : -60) / mPerLon),
+        ],
+        times: [for (var i = 0; i < offsets.length; i++) t0.add(Duration(seconds: i * 20))],
+      );
+      final a = _explore(pass, clean).crossings.single.avgSpeedKmh;
+      final b = _explore(pass, jittery).crossings.single.avgSpeedKmh;
+      expect(a, closeTo(72.0, 0.001));
+      expect(b, closeTo(72.0, 0.001), reason: 'fixed distance ⇒ jitter-immune');
     });
   });
 
   // ──────────────────── collection-level cool stats ───────────────────────
-  group('collection stats — fastest crossing + total time on passes', () {
+  group('collection stats — fastest crossing + total moving time', () {
+    Pass seg(String name, LatLng col) => Pass(
+          name: name,
+          lat: col.latitude,
+          lon: col.longitude,
+          ele: 2000,
+          cantons: const ['UR'],
+          lengthKm: 8.0,
+          start: PassPoint(lat: col.latitude - 4000 / _mPerLat, lon: col.longitude),
+          end: PassPoint(lat: col.latitude + 4000 / _mPerLat, lon: col.longitude),
+          geometry: [
+            LatLng(col.latitude - 4000 / _mPerLat, col.longitude),
+            col,
+            LatLng(col.latitude + 4000 / _mPerLat, col.longitude),
+          ],
+        );
+
+    RideTrack rideOver(String id, LatLng col, int legSeconds) {
+      final offsets = [-4000.0, -2000, 0, 2000, 4000]; // reaches both feet
+      final pts = [
+        for (final m in offsets) LatLng(col.latitude + m / _mPerLat, col.longitude),
+      ];
+      final t0 = DateTime(2026, 6, 1, 10);
+      final times = [
+        for (var i = 0; i < offsets.length; i++)
+          t0.add(Duration(seconds: i * legSeconds)),
+      ];
+      return RideTrack(rideId: id, points: pts, times: times, speedsMs: const []);
+    }
+
     test('fastestCrossing picks the single fastest pass crossing anywhere', () {
-      // Two passes far apart. Pass A ridden at 54 km/h (15 m/s); pass B at
-      // 90 km/h (25 m/s). The collection's fastest crossing is B @ 90.
+      // Pass A: 4 legs × 100 s = 400 s → 8 km/400 s = 72 km/h.
+      // Pass B: 4 legs × 80 s  = 320 s → 8 km/320 s = 90 km/h.  Fastest = B.
       final colA = const LatLng(46.50, 8.40);
       final colB = const LatLng(46.70, 9.00);
-
-      Pass seg(String name, LatLng col) => Pass(
-            name: name,
-            lat: col.latitude,
-            lon: col.longitude,
-            ele: 2000,
-            cantons: const ['UR'],
-            start: PassPoint(lat: col.latitude - 4000 / _mPerLat, lon: col.longitude),
-            end: PassPoint(lat: col.latitude + 4000 / _mPerLat, lon: col.longitude),
-            geometry: [
-              LatLng(col.latitude - 4000 / _mPerLat, col.longitude),
-              col,
-              LatLng(col.latitude + 4000 / _mPerLat, col.longitude),
-            ],
-          );
-
-      RideTrack rideOver(String id, LatLng col, double speedMs) {
-        final offsets = [-3000.0, -1500, 0, 1500, 3000];
-        final pts = [
-          for (final m in offsets) LatLng(col.latitude + m / _mPerLat, col.longitude),
-        ];
-        final t0 = DateTime(2026, 6, 1, 10);
-        final times = [
-          for (var i = 0; i < offsets.length; i++) t0.add(Duration(seconds: i * 10)),
-        ];
-        final speeds = [for (final _ in offsets) speedMs as double?];
-        return RideTrack(rideId: id, points: pts, times: times, speedsMs: speeds);
-      }
-
       final res = explorePasses(
         [seg('A', colA), seg('B', colB)],
-        [rideOver('rA', colA, 15), rideOver('rB', colB, 25)],
+        [rideOver('rA', colA, 100), rideOver('rB', colB, 80)],
       );
       expect(res.stats.fastestCrossing, isNotNull);
       expect(res.stats.fastestCrossing!.pass.name, 'B');
       expect(res.stats.fastestCrossing!.avgSpeedKmh, closeTo(90.0, 0.001));
       expect(res.stats.fastestCrossing!.rideId, 'rB');
-      // Total time on passes = both corridor durations summed.
-      // Each ride: 4 legs × 10 s = 40 s in the corridor → 80 s total.
-      expect(res.stats.totalTimeOnPassesS, 80);
+      expect(res.stats.fastestCrossing!.movingTimeS, 320);
+      expect(res.stats.fastestCrossing!.directionLabel, '↑'); // no connects
+      // Total MOVING time on passes = 400 + 320.
+      expect(res.stats.totalTimeOnPassesS, 720);
     });
 
     test('no measurable crossings → fastestCrossing null, total time 0', () {
-      final res = explorePasses(
-        [_segPass()],
-        const [],
-      );
+      final res = explorePasses([_segPass()], const []);
       expect(res.stats.fastestCrossing, isNull);
       expect(res.stats.totalTimeOnPassesS, 0);
     });

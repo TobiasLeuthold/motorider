@@ -96,7 +96,7 @@ void main() {
     expect(find.text('Noch nicht erkundet'), findsWidgets);
   });
 
-  testWidgets('crossed pass shows history rows with speed + best/mean',
+  testWidgets('crossed pass shows per-direction cards + history rows',
       (tester) async {
     final crossings = <PassCrossing>[
       PassCrossing(
@@ -105,7 +105,8 @@ void main() {
         direction: PassDirection.startToEnd,
         directionLabel: 'Realp → Gletsch',
         avgSpeedKmh: 64,
-        durationS: 420,
+        movingTimeS: 420, // 7:00
+        durationS: 480,
       ),
       PassCrossing(
         rideId: 'r2',
@@ -113,21 +114,25 @@ void main() {
         direction: PassDirection.endToStart,
         directionLabel: 'Gletsch → Realp',
         avgSpeedKmh: 88,
-        durationS: 360,
+        movingTimeS: 360, // 6:00
+        durationS: 390,
       ),
     ];
     await _pumpDetail(tester, _progress(_pass(), count: 2, crossings: crossings));
 
     expect(find.text('Deine Überquerungen'), findsOneWidget);
-    // Summary tiles.
-    expect(find.text('Bestschnitt'), findsOneWidget);
-    expect(find.text('Ø Schnitt'), findsOneWidget);
-    expect(find.text('Zeit am Pass'), findsOneWidget);
-    // Best speed = 88 km/h.
+    // Two per-direction cards, each with its own "Bestschnitt" figure.
+    expect(find.text('Bestschnitt'), findsNWidgets(2));
+    // Each direction label appears twice: card header + history row.
+    expect(find.text('Realp → Gletsch'), findsNWidgets(2));
+    expect(find.text('Gletsch → Realp'), findsNWidgets(2));
+    // Fixed-distance best speeds (card big number + the row's facts line).
+    expect(find.text('64 km/h'), findsWidgets);
     expect(find.text('88 km/h'), findsWidgets);
-    // Direction labels on the rows.
-    expect(find.text('Realp → Gletsch'), findsOneWidget);
-    expect(find.text('Gletsch → Realp'), findsOneWidget);
+    // Moving time shows on the history rows (stops excluded).
+    expect(find.textContaining('7:00'), findsWidgets);
+    // Total moving time across both directions = 13:00.
+    expect(find.textContaining('Gesamte Fahrzeit am Pass'), findsOneWidget);
     // Not the empty state.
     expect(find.text('Noch nicht erkundet'), findsNothing);
   });
